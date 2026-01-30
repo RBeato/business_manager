@@ -9,6 +9,10 @@ dist/
 .env.local
 .env.*.local
 
+# Apple private keys
+*.p8
+AuthKey_*.p8
+
 # IDE
 .idea/
 .vscode/

@@ -106,7 +106,13 @@ interface SalesReportRow {
 async function downloadSalesReport(date: Date): Promise<SalesReportRow[]> {
   // App Store Connect Sales Reports
   const reportDate = formatDate(date);
-  const url = `${APP_STORE_CONNECT_API}/salesReports?filter[reportType]=SALES&filter[reportSubType]=SUMMARY&filter[frequency]=DAILY&filter[reportDate]=${reportDate}&filter[vendorNumber]=YOUR_VENDOR_NUMBER`;
+  const vendorNumber = process.env.APP_STORE_CONNECT_VENDOR_NUMBER;
+
+  if (!vendorNumber) {
+    throw new Error('APP_STORE_CONNECT_VENDOR_NUMBER not configured');
+  }
+
+  const url = `${APP_STORE_CONNECT_API}/salesReports?filter[reportType]=SALES&filter[reportSubType]=SUMMARY&filter[frequency]=DAILY&filter[reportDate]=${reportDate}&filter[vendorNumber]=${vendorNumber}`;
 
   try {
     const response = await fetchWithAuth(url);

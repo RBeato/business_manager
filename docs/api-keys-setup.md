@@ -59,10 +59,16 @@ The secret key gives access to ALL apps in your RevenueCat project. You don't ne
 ```
 APP_STORE_CONNECT_KEY_ID=XXXXXXXXXX
 APP_STORE_CONNECT_ISSUER_ID=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+APP_STORE_CONNECT_VENDOR_NUMBER=85012345
 APP_STORE_CONNECT_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----
 MIGTAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBHkwdwIBAQQg...
 -----END PRIVATE KEY-----"
 ```
+
+### Finding Your Vendor Number:
+1. Go to App Store Connect
+2. Go to **Sales and Trends** or **Payments and Financial Reports**
+3. Look at the URL or dropdown - vendor number is a numeric ID like `85012345`
 
 ### Important:
 - Keep the private key secure - it cannot be downloaded again
