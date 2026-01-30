@@ -156,7 +156,51 @@ DeepSeek is very affordable (~$0.14/million input tokens, ~$0.28/million output 
 
 ---
 
-## 6. Resend (Email Delivery)
+## 6. Google AI Studio / Nano Banana (Image Generation)
+
+**What it provides:** AI image generation using Gemini 2.0 Flash Image model
+
+**Used by:** Meditnation Mobile app for personalized affirmation images
+
+### Steps:
+1. Go to [Google AI Studio](https://aistudio.google.com/app/apikey)
+2. Sign in with your Google account
+3. Click **Create API Key**
+4. Select a project or create new one
+5. Copy the API key
+
+### .env variable:
+```
+GOOGLE_AI_STUDIO_API_KEY=AIzaSy...
+```
+
+### Pricing:
+- ~$0.03 per image generated
+- Check usage at [Google Cloud Console](https://console.cloud.google.com/apis/dashboard)
+
+### Model used:
+- `gemini-2.0-flash-image-preview` (Image generation)
+
+---
+
+## 7. Smallest AI (Voice/TTS)
+
+**What it provides:** Text-to-speech voice generation
+
+**Used by:** Meditnation Mobile app
+
+### Steps:
+1. Go to [Smallest AI](https://smallest.ai/) (or relevant provider dashboard)
+2. Create account and get API key
+
+### .env variable:
+```
+SMALLEST_API_KEY=sk_...
+```
+
+---
+
+## 8. Resend (Email Delivery)
 
 **What it provides:** Sends daily report emails
 

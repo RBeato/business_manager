@@ -78,6 +78,8 @@
 | DeepSeek | ✅ Configured | $10.39 balance |
 | Resend | ✅ Configured | API key valid |
 | OpenAI | ✅ Configured | API key valid |
+| Google AI Studio | ✅ Configured | Nano Banana / Gemini Image |
+| Smallest AI | ✅ Configured | TTS provider |
 | Credit Monitoring | ✅ Working | Checks 5 services |
 | TypeScript | ✅ Compiles | No errors |
 | Git Repository | ✅ Pushed | github.com/RBeato/business_manager |
