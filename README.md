@@ -10,6 +10,7 @@ A centralized metrics aggregation system for tracking app portfolio performance 
 - **AI-Powered Insights**: Daily reports with DeepSeek-generated analysis and recommendations
 - **Credit Monitoring**: Real-time alerts when API credits run low
 - **Email Delivery**: Automated daily report emails via Resend
+- **🆕 Content Engine**: Automated blog post generation for healthopenpage.com, meditnation.org, and riffroutine.com with review workflow
 
 ## Apps Tracked
 

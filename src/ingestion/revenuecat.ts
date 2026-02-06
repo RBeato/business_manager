@@ -7,13 +7,26 @@ import {
 } from '../db/client.js';
 import type { IngestionResult, IngestionContext, App } from '../types/index.js';
 
-const REVENUECAT_API = 'https://api.revenuecat.com/v1';
+const REVENUECAT_API_V1 = 'https://api.revenuecat.com/v1';
+const REVENUECAT_API_V2 = 'https://api.revenuecat.com/v2';
+
+interface RevenueCatOverviewMetric {
+  id: string;
+  name: string;
+  value: number;
+  unit: string;
+  period: string;
+}
 
 interface RevenueCatOverview {
   active_subscribers_count: number;
   active_trials_count: number;
   mrr: number;
+  mrr_eur: number;
   revenue: number;
+  revenue_eur: number;
+  new_customers: number;
+  active_users: number;
 }
 
 interface RevenueCatChartData {
@@ -34,9 +47,11 @@ interface RevenueCatMetrics {
 
 async function fetchWithAuth(
   endpoint: string,
-  apiKey: string
+  apiKey: string,
+  apiVersion: 'v1' | 'v2' = 'v2'
 ): Promise<Response> {
-  const response = await fetch(`${REVENUECAT_API}${endpoint}`, {
+  const baseUrl = apiVersion === 'v2' ? REVENUECAT_API_V2 : REVENUECAT_API_V1;
+  const response = await fetch(`${baseUrl}${endpoint}`, {
     headers: {
       Authorization: `Bearer ${apiKey}`,
       'Content-Type': 'application/json',
@@ -58,12 +73,31 @@ async function fetchOverview(
   if (!app.revenuecat_app_id) return null;
 
   try {
+    // v2 API endpoint for overview metrics
     const response = await fetchWithAuth(
-      `/projects/${app.revenuecat_app_id}/overview`,
-      apiKey
+      `/projects/${app.revenuecat_app_id}/metrics/overview`,
+      apiKey,
+      'v2'
     );
-    const data = await response.json() as RevenueCatOverview;
-    return data;
+    const data = await response.json() as { metrics: RevenueCatOverviewMetric[] };
+
+    // Parse the array of metrics into our expected format
+    const metricsArray = data.metrics || [];
+    const getValue = (id: string): number => {
+      const metric = metricsArray.find(m => m.id === id);
+      return metric?.value || 0;
+    };
+
+    return {
+      active_subscribers_count: getValue('active_subscriptions'),
+      active_trials_count: getValue('active_trials'),
+      mrr: getValue('mrr'),
+      mrr_eur: getValue('mrr_eur'),
+      revenue: getValue('revenue'),
+      revenue_eur: getValue('revenue_eur'),
+      new_customers: getValue('new_customers'),
+      active_users: getValue('active_users'),
+    };
   } catch (error) {
     console.warn(`Could not fetch RevenueCat overview for ${app.slug}:`, error);
     return null;
@@ -79,17 +113,69 @@ async function fetchMetrics(
 
   const dateStr = formatDate(date);
   const prevDate = new Date(date);
-  prevDate.setDate(prevDate.getDate() - 1);
+  prevDate.setDate(prevDate.getDate() - 30); // Fetch last 30 days for context
   const startDateStr = formatDate(prevDate);
 
   try {
-    // Fetch charts data for the specific date range
-    const response = await fetchWithAuth(
-      `/projects/${app.revenuecat_app_id}/charts?start_date=${startDateStr}&end_date=${dateStr}`,
-      apiKey
-    );
-    const data = await response.json() as RevenueCatMetrics;
-    return data;
+    // v2 API uses individual metric endpoints
+    // Try fetching the main metrics we care about
+    const metricsToFetch = [
+      'active_subscriptions',
+      'active_trials',
+      'new_trials',
+      'trial_conversion',
+      'revenue',
+      'mrr',
+    ];
+
+    const results: Partial<RevenueCatMetrics> = {};
+
+    for (const metric of metricsToFetch) {
+      try {
+        const response = await fetchWithAuth(
+          `/projects/${app.revenuecat_app_id}/metrics/${metric}?start_date=${startDateStr}&end_date=${dateStr}&resolution=day`,
+          apiKey,
+          'v2'
+        );
+        const data = await response.json() as { values: RevenueCatChartData[] };
+
+        // Map metric names to our expected format
+        const keyMap: Record<string, keyof RevenueCatMetrics> = {
+          'active_subscriptions': 'active_subscribers',
+          'active_trials': 'active_trials',
+          'new_trials': 'new_trials',
+          'trial_conversion': 'trial_conversions',
+          'revenue': 'revenue',
+          'mrr': 'mrr',
+        };
+
+        const key = keyMap[metric];
+        if (key && data.values) {
+          results[key] = data.values;
+        }
+      } catch {
+        // Individual metric failed, continue with others
+      }
+
+      // Rate limiting between metric calls
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+
+    // If we got any data, return it
+    if (Object.keys(results).length > 0) {
+      return {
+        active_subscribers: results.active_subscribers || [],
+        active_trials: results.active_trials || [],
+        new_trials: results.new_trials || [],
+        trial_conversions: results.trial_conversions || [],
+        new_customers: [],
+        churned_customers: [],
+        revenue: results.revenue || [],
+        mrr: results.mrr || [],
+      };
+    }
+
+    return null;
   } catch (error) {
     console.warn(`Could not fetch RevenueCat metrics for ${app.slug}:`, error);
     return null;
@@ -129,74 +215,74 @@ export async function ingestRevenueCatData(
   });
 
   try {
-    const { apiKey } = config.revenueCat;
+    const { apiKey: fallbackKey, appKeys } = config.revenueCat;
 
     // Get apps with RevenueCat configured
     const rcApps = context.apps.filter((app) => app.revenuecat_app_id);
 
     for (const app of rcApps) {
-      // Fetch overview for current state
+      // Use per-app key if available, otherwise fall back to legacy key
+      const apiKey = appKeys?.[app.slug] || fallbackKey;
+
+      if (!apiKey) {
+        console.warn(`No API key for ${app.slug}, skipping`);
+        continue;
+      }
+
+      // Fetch overview for current state (v2 API)
       const overview = await fetchOverview(app, apiKey);
 
-      // Fetch metrics for the specific date
-      const metrics = await fetchMetrics(app, context.date, apiKey);
+      if (!overview) {
+        console.warn(`Could not fetch RevenueCat data for ${app.slug}`);
+        continue;
+      }
 
-      if (metrics) {
-        const activeSubscribers = getValueForDate(
-          metrics.active_subscribers,
-          dateStr
-        );
-        const activeTrials = getValueForDate(metrics.active_trials, dateStr);
-        const newTrials = getValueForDate(metrics.new_trials, dateStr);
-        const trialConversions = getValueForDate(
-          metrics.trial_conversions,
-          dateStr
-        );
-        const newCustomers = getValueForDate(metrics.new_customers, dateStr);
-        const churnedCustomers = getValueForDate(
-          metrics.churned_customers,
-          dateStr
-        );
-        const revenue = getValueForDate(metrics.revenue, dateStr);
-        const mrr = getValueForDate(metrics.mrr, dateStr);
+      console.log(`RevenueCat ${app.slug}: ${overview.active_subscribers_count} subs, $${overview.revenue} revenue (28d), $${overview.mrr} MRR`);
 
-        // Upsert subscription data for each platform
-        for (const platform of ['ios', 'android'] as const) {
-          if (!app.platforms.includes(platform)) continue;
+      // Use overview data directly (v2 API doesn't support historical timeseries)
+      const activeSubscribers = overview.active_subscribers_count;
+      const activeTrials = overview.active_trials_count;
+      const revenue = overview.revenue;
+      const mrr = overview.mrr;
+      const newCustomers = overview.new_customers;
 
-          await upsertDailySubscriptions({
-            app_id: app.id,
-            date: dateStr,
-            platform,
-            product_id: undefined, // Aggregate across all products
-            active_subscriptions: Math.round(activeSubscribers / app.platforms.length),
-            active_trials: Math.round(activeTrials / app.platforms.length),
-            new_trials: Math.round(newTrials / app.platforms.length),
-            trial_conversions: Math.round(trialConversions / app.platforms.length),
-            new_subscriptions: Math.round(newCustomers / app.platforms.length),
-            cancellations: Math.round(churnedCustomers / app.platforms.length),
-            mrr: mrr / app.platforms.length,
-            raw_data: {
-              metrics_date: dateStr,
-              overview,
-            } as unknown as Record<string, unknown>,
-          });
-          recordsProcessed++;
+      // Upsert subscription data for each platform
+      for (const platform of ['ios', 'android'] as const) {
+        if (!app.platforms.includes(platform)) continue;
 
-          // Also upsert subscription revenue
-          await upsertDailyRevenue({
-            app_id: app.id,
-            date: dateStr,
-            platform,
-            country: undefined,
-            currency: 'USD',
-            gross_revenue: revenue / app.platforms.length,
-            net_revenue: (revenue * 0.85) / app.platforms.length, // Estimate after store fees
-            subscription_revenue: revenue / app.platforms.length,
-            raw_data: { source: 'revenuecat' } as unknown as Record<string, unknown>,
-          });
-          recordsProcessed++;
-        }
+        await upsertDailySubscriptions({
+          app_id: app.id,
+          date: dateStr,
+          platform,
+          product_id: undefined, // Aggregate across all products
+          active_subscriptions: Math.round(activeSubscribers / app.platforms.length),
+          active_trials: Math.round(activeTrials / app.platforms.length),
+          new_trials: 0, // Not available in overview
+          trial_conversions: 0, // Not available in overview
+          new_subscriptions: Math.round(newCustomers / app.platforms.length),
+          cancellations: 0, // Not available in overview
+          mrr: mrr / app.platforms.length,
+          raw_data: {
+            metrics_date: dateStr,
+            overview,
+            source: 'revenuecat_v2_overview',
+          } as unknown as Record<string, unknown>,
+        });
+        recordsProcessed++;
+
+        // Also upsert subscription revenue
+        await upsertDailyRevenue({
+          app_id: app.id,
+          date: dateStr,
+          platform,
+          country: undefined,
+          currency: 'USD',
+          gross_revenue: revenue / app.platforms.length,
+          net_revenue: (revenue * 0.85) / app.platforms.length, // Estimate after store fees
+          subscription_revenue: revenue / app.platforms.length,
+          raw_data: { source: 'revenuecat_v2' } as unknown as Record<string, unknown>,
+        });
+        recordsProcessed++;
       }
 
       // Rate limiting

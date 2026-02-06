@@ -13,12 +13,16 @@
     "ingest": "tsx src/index.ts --ingest",
     "report": "tsx src/index.ts --report",
     "check-credits": "tsx scripts/check-credits.ts",
+    "content:generate": "tsx scripts/generate-content.ts",
+    "content:publish": "tsx scripts/publish-scheduled.ts",
+    "content:seed": "tsx scripts/seed-topics.ts",
     "lint": "eslint src --ext .ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.32.0",
     "@google-cloud/billing": "^4.0.0",
+    "@octokit/rest": "^20.0.2",
     "@supabase/supabase-js": "^2.45.0",
     "date-fns": "^3.6.0",
     "dotenv": "^16.4.5",

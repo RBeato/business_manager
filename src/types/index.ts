@@ -499,7 +499,8 @@ export interface GooglePlayConfig {
 }
 
 export interface RevenueCatConfig {
-  apiKey: string;
+  apiKey: string;  // Legacy fallback key
+  appKeys?: Record<string, string | undefined>;  // Per-app keys: { app_slug: api_key }
 }
 
 export interface FirebaseConfig {

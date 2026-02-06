@@ -12,6 +12,11 @@ dist/
 # Apple private keys
 *.p8
 AuthKey_*.p8
+guitar-chord-generator-463115-51989ca952e0.json
+guitar-progression-generator-firebase-adminsdk-fbsvc-3e3112469b.json
+longevity-openpage-firebase-adminsdk-fbsvc-88672b89c8.json
+eartrainer-7a3e9-firebase-adminsdk-jkgn6-ab69c6a329.json
+earenhancer-66a1d-firebase-adminsdk-i6px2-4d97514876.json
 
 # IDE
 .idea/

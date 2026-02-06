@@ -52,6 +52,13 @@ export function loadConfig(): Config {
     revenueCat: process.env.REVENUECAT_SECRET_API_KEY
       ? {
           apiKey: getRequiredEnv('REVENUECAT_SECRET_API_KEY'),
+          appKeys: {
+            guitar_progression_generator: getEnv('REVENUECAT_GPG_SECRET_API_KEY'),
+            smguitar: getEnv('REVENUECAT_SMGUITAR_SECRET_API_KEY'),
+            ear_n_play: getEnv('REVENUECAT_EARNPLAY_SECRET_API_KEY'),
+            meditnation_mobile: getEnv('REVENUECAT_MEDITNATION_SECRET_API_KEY'),
+            health_open_page: getEnv('REVENUECAT_HOP_SECRET_API_KEY'),
+          } as Record<string, string | undefined>,
         }
       : undefined,
 
