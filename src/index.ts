@@ -84,7 +84,7 @@ async function main() {
     const reportConfig: ReportConfig = {
       date,
       type: 'daily',
-      recipients: config.email?.recipients || [],
+      recipients: [],
       includeInsights: !!config.anthropic,
     };
 
@@ -92,15 +92,14 @@ async function main() {
     console.log('\nReport generated.\n');
   }
 
-  // Send report
+  // Send report via Telegram
   if (values.send || runAll) {
     if (!report) {
       console.log('--- Loading Report ---\n');
-      const config = getConfig();
       const reportConfig: ReportConfig = {
         date,
         type: 'daily',
-        recipients: config.email?.recipients || [],
+        recipients: [],
         includeInsights: false,
       };
       report = await generateDailyReport(reportConfig);
@@ -113,7 +112,7 @@ async function main() {
       console.log('Report sent successfully!\n');
     } else {
       console.error(`Failed to send report: ${result.error}\n`);
-      process.exit(1);
+      // Don't exit with error — report delivery failure is non-fatal
     }
   }
 
@@ -129,7 +128,7 @@ Usage: npm run dev [options]
 Options:
   -i, --ingest      Run data ingestion only
   -r, --report      Generate report only
-  -s, --send        Send report email only
+  -s, --send        Send report via Telegram
   -d, --date        Target date (YYYY-MM-DD), defaults to yesterday
   --sources         Comma-separated list of ingestion sources
   --dry-run         Run without making changes

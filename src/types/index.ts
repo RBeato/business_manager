@@ -226,6 +226,38 @@ export interface DailyEmailMetrics {
   created_at: string;
 }
 
+export interface DailySearchConsole {
+  id: string;
+  app_id: string;
+  date: string;
+  query?: string;
+  page?: string;
+  impressions: number;
+  clicks: number;
+  ctr: number;
+  position: number;
+  raw_data?: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface DailyUmamiStats {
+  id: string;
+  app_id: string;
+  date: string;
+  website_id: string;
+  pageviews: number;
+  visitors: number;
+  visits: number;
+  bounce_rate: number;
+  avg_visit_duration: number;
+  top_pages?: Record<string, number>;
+  top_referrers?: Record<string, number>;
+  top_countries?: Record<string, number>;
+  top_browsers?: Record<string, number>;
+  raw_data?: Record<string, unknown>;
+  created_at: string;
+}
+
 export interface DailyReport {
   id: string;
   date: string;
@@ -511,9 +543,15 @@ export interface AnthropicConfig {
   apiKey: string;
 }
 
-export interface ResendConfig {
-  apiKey: string;
-  fromEmail: string;
+export interface TelegramConfig {
+  botToken: string;
+  chatId: string;
+}
+
+export interface SendTelegramResult {
+  success: boolean;
+  messageId?: number;
+  error?: string;
 }
 
 export interface Config {
@@ -532,8 +570,12 @@ export interface Config {
   cartesia?: { apiKey: string };
   googleCloud?: { billingAccountId: string };
   neon?: { apiKey: string };
-  resend?: ResendConfig;
-  email?: {
-    recipients: string[];
+  telegram?: TelegramConfig;
+  umami?: {
+    apiUrl: string;
+    apiToken: string;
+  };
+  brevo?: {
+    websites: Record<string, { apiKey: string; appSlug: string }>;
   };
 }

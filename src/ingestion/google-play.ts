@@ -166,7 +166,7 @@ export async function ingestGooglePlayData(
           app_id: app.id,
           date: dateStr,
           platform: 'android',
-          country: undefined,
+          country: '', // Aggregate - must be non-null for UNIQUE constraint upsert
           installs: stats.installs,
           uninstalls: stats.uninstalls,
           updates: stats.updates,

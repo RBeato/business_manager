@@ -290,6 +290,42 @@ CREATE TABLE IF NOT EXISTS daily_email_metrics (
     UNIQUE(app_id, date, email_type)
 );
 
+-- Google Search Console daily metrics
+CREATE TABLE IF NOT EXISTS daily_search_console (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    app_id UUID NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+    date DATE NOT NULL,
+    query VARCHAR(500),        -- NULL for aggregate
+    page VARCHAR(500),         -- NULL for aggregate
+    impressions INTEGER DEFAULT 0,
+    clicks INTEGER DEFAULT 0,
+    ctr DECIMAL(5,4) DEFAULT 0,
+    position DECIMAL(5,2) DEFAULT 0,
+    raw_data JSONB,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE(app_id, date, query, page)
+);
+
+-- Umami analytics daily stats
+CREATE TABLE IF NOT EXISTS daily_umami_stats (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    app_id UUID NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+    date DATE NOT NULL,
+    website_id VARCHAR(100) NOT NULL,
+    pageviews INTEGER DEFAULT 0,
+    visitors INTEGER DEFAULT 0,
+    visits INTEGER DEFAULT 0,
+    bounce_rate DECIMAL(5,2) DEFAULT 0,
+    avg_visit_duration INTEGER DEFAULT 0,
+    top_pages JSONB,
+    top_referrers JSONB,
+    top_countries JSONB,
+    top_browsers JSONB,
+    raw_data JSONB,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE(app_id, date, website_id)
+);
+
 -- ============================================
 -- REPORTS & LOGGING
 -- ============================================
@@ -376,6 +412,12 @@ CREATE INDEX IF NOT EXISTS idx_daily_website_traffic_date ON daily_website_traff
 CREATE INDEX IF NOT EXISTS idx_daily_website_traffic_app_date ON daily_website_traffic(app_id, date DESC);
 
 CREATE INDEX IF NOT EXISTS idx_daily_email_metrics_date ON daily_email_metrics(date DESC);
+
+CREATE INDEX IF NOT EXISTS idx_daily_search_console_date ON daily_search_console(date DESC);
+CREATE INDEX IF NOT EXISTS idx_daily_search_console_app ON daily_search_console(app_id, date DESC);
+
+CREATE INDEX IF NOT EXISTS idx_daily_umami_stats_date ON daily_umami_stats(date DESC);
+CREATE INDEX IF NOT EXISTS idx_daily_umami_stats_app ON daily_umami_stats(app_id, date DESC);
 
 CREATE INDEX IF NOT EXISTS idx_daily_reports_date ON daily_reports(date DESC);
 CREATE INDEX IF NOT EXISTS idx_ingestion_logs_date ON ingestion_logs(date DESC);

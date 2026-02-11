@@ -8,6 +8,9 @@ import { ingestRevenueCatData } from './revenuecat.js';
 import { ingestFirebaseData } from './firebase.js';
 import { ingestWebsiteData } from './website.js';
 import { ingestEmailData } from './email.js';
+import { ingestSearchConsoleData } from './search-console.js';
+import { ingestUmamiData } from './umami.js';
+import { ingestBrevoData } from './brevo.js';
 import {
   ingestAnthropicData,
   ingestElevenLabsData,
@@ -24,7 +27,10 @@ const INGESTION_SOURCES: Record<string, IngestionFunction> = {
   revenuecat: ingestRevenueCatData,
   firebase: ingestFirebaseData,
   website: ingestWebsiteData,
+  'search-console': ingestSearchConsoleData,
+  umami: ingestUmamiData,
   email: ingestEmailData,
+  brevo: ingestBrevoData,
   anthropic: ingestAnthropicData,
   elevenlabs: ingestElevenLabsData,
   cartesia: ingestCartesiaData,

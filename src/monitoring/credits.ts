@@ -244,55 +244,6 @@ async function checkCartesia(apiKey: string): Promise<CreditStatus> {
   }
 }
 
-async function checkResend(apiKey: string): Promise<CreditStatus> {
-  try {
-    // Resend doesn't have a direct quota API, but we can check domains
-    const response = await fetch('https://api.resend.com/domains', {
-      headers: {
-        'Authorization': `Bearer ${apiKey}`,
-      },
-    });
-
-    if (response.status === 401) {
-      return {
-        service: 'Resend',
-        status: 'critical',
-        unit: 'API access',
-        message: 'API key invalid',
-        checkTime: new Date().toISOString(),
-      };
-    }
-
-    if (response.status === 429) {
-      return {
-        service: 'Resend',
-        status: 'warning',
-        unit: 'emails',
-        message: 'Rate limited - approaching limits',
-        checkTime: new Date().toISOString(),
-      };
-    }
-
-    // Free tier: 100 emails/day, 3000/month
-    // Check dashboard for actual usage
-    return {
-      service: 'Resend',
-      status: 'ok',
-      unit: 'emails',
-      message: 'API key valid. Check resend.com/emails for usage.',
-      checkTime: new Date().toISOString(),
-    };
-  } catch (error) {
-    return {
-      service: 'Resend',
-      status: 'error',
-      unit: 'emails',
-      message: `Error: ${error}`,
-      checkTime: new Date().toISOString(),
-    };
-  }
-}
-
 async function checkAnthropic(apiKey: string): Promise<CreditStatus> {
   try {
     // Anthropic doesn't expose balance via API
@@ -352,6 +303,64 @@ async function checkAnthropic(apiKey: string): Promise<CreditStatus> {
   }
 }
 
+async function checkBrevo(apiKey: string, label: string): Promise<CreditStatus> {
+  try {
+    const response = await fetch('https://api.brevo.com/v3/account', {
+      headers: {
+        'api-key': apiKey,
+        'Accept': 'application/json',
+      },
+    });
+
+    if (response.status === 401) {
+      return {
+        service: `Brevo (${label})`,
+        status: 'critical',
+        unit: 'API access',
+        message: 'API key invalid',
+        checkTime: new Date().toISOString(),
+      };
+    }
+
+    if (!response.ok) {
+      throw new Error(`API error: ${response.status}`);
+    }
+
+    const data = await response.json() as {
+      email: string;
+      plan: Array<{ type: string; credits: number; creditsType: string }>;
+    };
+
+    const smtpPlan = data.plan?.find(p => p.creditsType === 'sendLimit');
+    if (smtpPlan) {
+      return {
+        service: `Brevo (${label})`,
+        status: smtpPlan.credits > 100 ? 'ok' : smtpPlan.credits > 20 ? 'warning' : 'critical',
+        remaining: smtpPlan.credits,
+        unit: 'emails/day',
+        message: `Plan: ${smtpPlan.type}, ${smtpPlan.credits} emails/day remaining`,
+        checkTime: new Date().toISOString(),
+      };
+    }
+
+    return {
+      service: `Brevo (${label})`,
+      status: 'ok',
+      unit: 'API access',
+      message: `Account: ${data.email}, key valid`,
+      checkTime: new Date().toISOString(),
+    };
+  } catch (error) {
+    return {
+      service: `Brevo (${label})`,
+      status: 'error',
+      unit: 'API access',
+      message: `Error: ${error}`,
+      checkTime: new Date().toISOString(),
+    };
+  }
+}
+
 // ============================================
 // MAIN MONITORING FUNCTION
 // ============================================
@@ -386,16 +395,18 @@ export async function checkAllCredits(): Promise<CreditStatus[]> {
     results.push(await checkCartesia(config.cartesia.apiKey));
   }
 
-  // Resend
-  if (config.resend) {
-    console.log('Checking Resend...');
-    results.push(await checkResend(config.resend.apiKey));
-  }
-
   // Anthropic
   if (config.anthropic) {
     console.log('Checking Anthropic...');
     results.push(await checkAnthropic(config.anthropic.apiKey));
+  }
+
+  // Brevo
+  if (config.brevo) {
+    for (const [name, website] of Object.entries(config.brevo.websites)) {
+      console.log(`Checking Brevo (${name})...`);
+      results.push(await checkBrevo(website.apiKey, name));
+    }
   }
 
   return results;
@@ -461,4 +472,4 @@ export async function monitorCredits(sendAlerts: boolean = true): Promise<{
 }
 
 // Export for CLI
-export { checkDeepSeek, checkElevenLabs, checkCartesia, checkOpenAI, checkResend, checkAnthropic };
+export { checkDeepSeek, checkElevenLabs, checkCartesia, checkOpenAI, checkAnthropic, checkBrevo };

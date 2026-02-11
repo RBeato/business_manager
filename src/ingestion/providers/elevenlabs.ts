@@ -154,24 +154,62 @@ export async function ingestElevenLabsData(
   try {
     const { apiKey } = config.elevenlabs;
 
-    // Fetch history for the date
-    const history = await fetchHistory(apiKey, context.date);
-
-    // Calculate usage
     let totalCharacters = 0;
-    const usageByVoice: Record<string, number> = {};
+    let totalCost = 0;
+    let usageBreakdown: Record<string, unknown> = {};
+    let rawData: Record<string, unknown> = {};
 
-    for (const item of history) {
-      const charChange =
-        item.character_count_change_to - item.character_count_change_from;
-      totalCharacters += charChange;
+    // Try fetching detailed history first
+    try {
+      const history = await fetchHistory(apiKey, context.date);
 
-      const voiceName = item.voice_name || item.voice_id;
-      usageByVoice[voiceName] = (usageByVoice[voiceName] || 0) + charChange;
+      const usageByVoice: Record<string, number> = {};
+      for (const item of history) {
+        const charChange =
+          item.character_count_change_to - item.character_count_change_from;
+        totalCharacters += charChange;
+
+        const voiceName = item.voice_name || item.voice_id;
+        usageByVoice[voiceName] = (usageByVoice[voiceName] || 0) + charChange;
+      }
+
+      totalCost = totalCharacters * COST_PER_CHARACTER;
+      usageBreakdown = {
+        total_characters: totalCharacters,
+        requests: history.length,
+        ...usageByVoice,
+      };
+      rawData = {
+        source: 'history',
+        history_count: history.length,
+        voices_used: Object.keys(usageByVoice),
+      };
+    } catch (historyError) {
+      // History endpoint requires speech_history_read permission.
+      // Fall back to subscription data (aggregate usage only).
+      console.warn(`  ElevenLabs history unavailable, trying subscription data`);
+
+      try {
+        const stats = await fetchUsageStats(apiKey);
+        totalCharacters = stats.character_count;
+        totalCost = totalCharacters * COST_PER_CHARACTER;
+        usageBreakdown = {
+          total_characters: totalCharacters,
+          character_limit: stats.character_limit,
+        };
+        rawData = {
+          source: 'subscription',
+          character_count: stats.character_count,
+          character_limit: stats.character_limit,
+          next_reset_unix: stats.next_character_count_reset_unix,
+        };
+      } catch (subError) {
+        // API key lacks both history and subscription read permissions.
+        // Record zero usage — key needs to be regenerated with proper scopes.
+        console.warn(`  ElevenLabs subscription data also unavailable (key lacks permissions)`);
+        rawData = { source: 'unavailable', error: 'API key missing required permissions' };
+      }
     }
-
-    // Calculate cost
-    const totalCost = totalCharacters * COST_PER_CHARACTER;
 
     // Upsert provider costs
     await upsertDailyProviderCosts({
@@ -183,15 +221,8 @@ export async function ingestElevenLabsData(
       usage_quantity: totalCharacters,
       usage_unit: 'characters',
       cost_breakdown: { text_to_speech: totalCost },
-      usage_breakdown: {
-        total_characters: totalCharacters,
-        requests: history.length,
-        ...usageByVoice,
-      },
-      raw_data: {
-        history_count: history.length,
-        voices_used: Object.keys(usageByVoice),
-      } as unknown as Record<string, unknown>,
+      usage_breakdown: usageBreakdown,
+      raw_data: rawData,
     });
     recordsProcessed++;
 

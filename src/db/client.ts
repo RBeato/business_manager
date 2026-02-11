@@ -11,6 +11,8 @@ import type {
   DailyProviderCosts,
   DailyWebsiteTraffic,
   DailyEmailMetrics,
+  DailySearchConsole,
+  DailyUmamiStats,
   DailyReport,
   IngestionLog,
 } from '../types/index.js';
@@ -186,6 +188,28 @@ export async function upsertDailyEmailMetrics(
   });
 
   if (error) throw new Error(`Failed to upsert daily_email_metrics: ${error.message}`);
+}
+
+export async function upsertDailySearchConsole(
+  data: Omit<DailySearchConsole, 'id' | 'created_at'>
+): Promise<void> {
+  const supabase = getSupabaseClient();
+  const { error } = await supabase.from('daily_search_console').upsert(data, {
+    onConflict: 'app_id,date,query,page',
+  });
+
+  if (error) throw new Error(`Failed to upsert daily_search_console: ${error.message}`);
+}
+
+export async function upsertDailyUmamiStats(
+  data: Omit<DailyUmamiStats, 'id' | 'created_at'>
+): Promise<void> {
+  const supabase = getSupabaseClient();
+  const { error } = await supabase.from('daily_umami_stats').upsert(data, {
+    onConflict: 'app_id,date,website_id',
+  });
+
+  if (error) throw new Error(`Failed to upsert daily_umami_stats: ${error.message}`);
 }
 
 export async function upsertDailyReport(

@@ -114,7 +114,8 @@ async function fetchActiveUsers(
       avgSessionDuration: parseFloat(row.metricValues[5]?.value || '0'),
     };
   } catch (error) {
-    console.warn(`Could not fetch active users for ${app.slug}:`, error);
+    const msg = error instanceof Error ? error.message.split('\n')[0] : String(error);
+    console.warn(`  Skipping GA4 active users for ${app.slug}: ${msg}`);
     return null;
   }
 }
@@ -162,7 +163,8 @@ async function fetchFeatureUsage(
 
     return featureEvents;
   } catch (error) {
-    console.warn(`Could not fetch feature usage for ${app.slug}:`, error);
+    const msg = error instanceof Error ? error.message.split('\n')[0] : String(error);
+    console.warn(`  Skipping GA4 feature usage for ${app.slug}: ${msg}`);
     return [];
   }
 }
@@ -248,7 +250,8 @@ async function fetchRetention(
 
     return { d1Retention: d1, d7Retention: d7, d30Retention: d30 };
   } catch (error) {
-    console.warn(`Could not fetch retention for ${app.slug}:`, error);
+    const msg = error instanceof Error ? error.message.split('\n')[0] : String(error);
+    console.warn(`  Skipping GA4 retention for ${app.slug}: ${msg}`);
     return { d1Retention: null, d7Retention: null, d30Retention: null };
   }
 }

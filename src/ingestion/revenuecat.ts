@@ -239,33 +239,43 @@ export async function ingestRevenueCatData(
 
       console.log(`RevenueCat ${app.slug}: ${overview.active_subscribers_count} subs, $${overview.revenue} revenue (28d), $${overview.mrr} MRR`);
 
-      // Use overview data directly (v2 API doesn't support historical timeseries)
       const activeSubscribers = overview.active_subscribers_count;
       const activeTrials = overview.active_trials_count;
-      const revenue = overview.revenue;
       const mrr = overview.mrr;
       const newCustomers = overview.new_customers;
 
-      // Upsert subscription data for each platform
-      for (const platform of ['ios', 'android'] as const) {
-        if (!app.platforms.includes(platform)) continue;
+      // Try to get daily timeseries data for accurate revenue
+      const metrics = await fetchMetrics(app, context.date, apiKey);
+      const dailyRevenue = metrics?.revenue?.length
+        ? getValueForDate(metrics.revenue, dateStr)
+        : overview.revenue / 28; // Approximate daily from 28-day aggregate
 
+      // Only count mobile platforms (ios/android) for splitting
+      const mobilePlatforms = (['ios', 'android'] as const).filter(
+        p => app.platforms.includes(p)
+      );
+      const platformCount = mobilePlatforms.length || 1;
+
+      // Upsert subscription data for each mobile platform
+      // NOTE: country and product_id MUST be non-null strings for
+      // PostgreSQL UNIQUE constraints to match on upsert (NULL != NULL)
+      for (const platform of mobilePlatforms) {
         await upsertDailySubscriptions({
           app_id: app.id,
           date: dateStr,
           platform,
-          product_id: undefined, // Aggregate across all products
-          active_subscriptions: Math.round(activeSubscribers / app.platforms.length),
-          active_trials: Math.round(activeTrials / app.platforms.length),
+          product_id: '', // Aggregate across all products
+          active_subscriptions: Math.round(activeSubscribers / platformCount),
+          active_trials: Math.round(activeTrials / platformCount),
           new_trials: 0, // Not available in overview
           trial_conversions: 0, // Not available in overview
-          new_subscriptions: Math.round(newCustomers / app.platforms.length),
+          new_subscriptions: Math.round(newCustomers / platformCount),
           cancellations: 0, // Not available in overview
-          mrr: mrr / app.platforms.length,
+          mrr: mrr / platformCount,
           raw_data: {
             metrics_date: dateStr,
             overview,
-            source: 'revenuecat_v2_overview',
+            source: metrics?.revenue?.length ? 'revenuecat_v2_timeseries' : 'revenuecat_v2_overview',
           } as unknown as Record<string, unknown>,
         });
         recordsProcessed++;
@@ -275,11 +285,11 @@ export async function ingestRevenueCatData(
           app_id: app.id,
           date: dateStr,
           platform,
-          country: undefined,
+          country: '', // Aggregate across all countries
           currency: 'USD',
-          gross_revenue: revenue / app.platforms.length,
-          net_revenue: (revenue * 0.85) / app.platforms.length, // Estimate after store fees
-          subscription_revenue: revenue / app.platforms.length,
+          gross_revenue: dailyRevenue / platformCount,
+          net_revenue: (dailyRevenue * 0.85) / platformCount, // Estimate after store fees
+          subscription_revenue: dailyRevenue / platformCount,
           raw_data: { source: 'revenuecat_v2' } as unknown as Record<string, unknown>,
         });
         recordsProcessed++;

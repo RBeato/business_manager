@@ -16,6 +16,9 @@
     "content:generate": "tsx scripts/generate-content.ts",
     "content:publish": "tsx scripts/publish-scheduled.ts",
     "content:seed": "tsx scripts/seed-topics.ts",
+    "setup:ga4": "tsx scripts/setup-ga4.ts",
+    "telegram:deploy": "supabase functions deploy telegram-webhook --no-verify-jwt",
+    "telegram:set-webhook": "tsx scripts/set-telegram-webhook.ts",
     "lint": "eslint src --ext .ts",
     "typecheck": "tsc --noEmit"
   },

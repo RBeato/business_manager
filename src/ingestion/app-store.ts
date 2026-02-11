@@ -10,7 +10,6 @@ import {
 import type { IngestionResult, IngestionContext, App } from '../types/index.js';
 
 const APP_STORE_CONNECT_API = 'https://api.appstoreconnect.apple.com/v1';
-const ANALYTICS_API = 'https://api.appstoreconnect.apple.com/v1/analyticsReports';
 
 interface AppStoreConnectToken {
   token: string;
@@ -144,48 +143,21 @@ async function downloadSalesReport(date: Date): Promise<SalesReportRow[]> {
 
     return rows;
   } catch (error) {
-    // Sales reports may not be available for recent dates
-    console.warn(`Could not fetch sales report for ${reportDate}:`, error);
+    // Sales reports have ~1-day delay, so today's date will always 404
+    const msg = error instanceof Error ? error.message.split('\n')[0] : String(error);
+    console.warn(`  No sales data for ${reportDate} (${msg})`);
     return [];
   }
 }
 
-interface AnalyticsMetrics {
-  installs: number;
-  uninstalls: number;
-  updates: number;
-  productPageViews: number;
-  impressions: number;
-}
-
-async function fetchAnalyticsForApp(
-  app: App,
-  date: Date
-): Promise<AnalyticsMetrics | null> {
-  if (!app.apple_app_id) return null;
-
-  const dateStr = formatDate(date);
-
-  try {
-    // Fetch app analytics (requires Analytics Reports API access)
-    // This is a simplified version - actual implementation depends on report availability
-    const url = `${ANALYTICS_API}?filter[app]=${app.apple_app_id}&filter[date]=${dateStr}`;
-    const response = await fetchWithAuth(url);
-    const data = await response.json() as { data?: { installs?: number; uninstalls?: number; updates?: number; productPageViews?: number; impressions?: number } };
-
-    // Parse analytics data (structure varies by report type)
-    return {
-      installs: data.data?.installs ?? 0,
-      uninstalls: data.data?.uninstalls ?? 0,
-      updates: data.data?.updates ?? 0,
-      productPageViews: data.data?.productPageViews ?? 0,
-      impressions: data.data?.impressions ?? 0,
-    };
-  } catch (error) {
-    console.warn(`Could not fetch analytics for ${app.slug}:`, error);
-    return null;
-  }
-}
+// NOTE: App Store Connect Analytics Reports API requires a multi-step flow:
+// 1. POST /v1/analyticsReportRequests (one-time setup per app, takes 1-2 days)
+// 2. GET /v1/analyticsReportRequests/{id}/reports (filter by category)
+// 3. GET /v1/analyticsReports/{id}/instances (filter by date)
+// 4. GET /v1/analyticsReportInstances/{id}/segments (get download URLs)
+// 5. Download gzipped TSV data
+// For now, install counts are derived from sales report data.
+// TODO: Implement full Analytics Reports API for impressions, page views, uninstalls.
 
 export async function ingestAppStoreData(
   context: IngestionContext
@@ -239,29 +211,12 @@ export async function ingestAppStoreData(
     for (const app of iosApps) {
       if (!app.apple_app_id) continue;
 
-      // Fetch analytics
-      const analytics = await fetchAnalyticsForApp(app, context.date);
-
-      if (analytics) {
-        // Upsert installs (aggregate for iOS platform)
-        await upsertDailyInstalls({
-          app_id: app.id,
-          date: dateStr,
-          platform: 'ios',
-          country: undefined,
-          installs: analytics.installs,
-          uninstalls: analytics.uninstalls,
-          updates: analytics.updates,
-          product_page_views: analytics.productPageViews,
-          impressions: analytics.impressions,
-          raw_data: analytics as unknown as Record<string, unknown>,
-        });
-        recordsProcessed++;
-      }
-
-      // Process sales data
+      // Process sales data (revenue + install counts derived from units)
       const appSales = salesByApp.get(app.apple_app_id);
       if (appSales) {
+        let totalInstalls = 0;
+        let totalUpdates = 0;
+
         for (const [country, rows] of appSales) {
           const grossRevenue = rows.reduce(
             (sum, row) => sum + (row.units * row.customerPrice),
@@ -281,6 +236,18 @@ export async function ingestAppStoreData(
             .filter((r) => r.subscription !== 'Yes')
             .reduce((sum, row) => sum + row.developerProceeds, 0);
 
+          // Count installs vs updates from product type
+          // ProductTypeIdentifier: 1 = free, 1F = free universal, 7 = update, 7F = update universal
+          const installs = rows
+            .filter((r) => !r.productTypeIdentifier.startsWith('7'))
+            .reduce((sum, row) => sum + Math.abs(row.units), 0);
+          const updates = rows
+            .filter((r) => r.productTypeIdentifier.startsWith('7'))
+            .reduce((sum, row) => sum + Math.abs(row.units), 0);
+
+          totalInstalls += installs;
+          totalUpdates += updates;
+
           await upsertDailyRevenue({
             app_id: app.id,
             date: dateStr,
@@ -294,6 +261,23 @@ export async function ingestAppStoreData(
             subscription_revenue: subRevenue,
             transaction_count: transactions,
             raw_data: { rows } as unknown as Record<string, unknown>,
+          });
+          recordsProcessed++;
+        }
+
+        // Upsert aggregate installs from sales data
+        if (totalInstalls > 0 || totalUpdates > 0) {
+          await upsertDailyInstalls({
+            app_id: app.id,
+            date: dateStr,
+            platform: 'ios',
+            country: '', // Aggregate — non-null for UNIQUE constraint upsert
+            installs: totalInstalls,
+            uninstalls: 0, // Not available from sales reports
+            updates: totalUpdates,
+            product_page_views: 0, // Requires Analytics Reports API
+            impressions: 0, // Requires Analytics Reports API
+            raw_data: { source: 'sales_report' } as unknown as Record<string, unknown>,
           });
           recordsProcessed++;
         }

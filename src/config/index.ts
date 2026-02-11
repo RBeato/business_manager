@@ -104,16 +104,32 @@ export function loadConfig(): Config {
         }
       : undefined,
 
-    resend: process.env.RESEND_API_KEY
+    telegram: process.env.TELEGRAM_BOT_TOKEN
       ? {
-          apiKey: getRequiredEnv('RESEND_API_KEY'),
-          fromEmail: getEnv('REPORT_EMAIL_FROM') || 'reports@example.com',
+          botToken: getRequiredEnv('TELEGRAM_BOT_TOKEN'),
+          chatId: getRequiredEnv('TELEGRAM_CHAT_ID'),
         }
       : undefined,
 
-    email: {
-      recipients: (getEnv('REPORT_EMAIL_TO') || '').split(',').filter(Boolean),
-    },
+    umami: process.env.UMAMI_API_TOKEN
+      ? {
+          apiUrl: process.env.UMAMI_API_URL || 'https://umami-analytics-theta.vercel.app',
+          apiToken: process.env.UMAMI_API_TOKEN,
+        }
+      : undefined,
+
+    brevo: process.env.BREVO_HOP_API_KEY || process.env.BREVO_RIFFROUTINE_API_KEY
+      ? {
+          websites: {
+            ...(process.env.BREVO_HOP_API_KEY ? {
+              healthopenpage: { apiKey: process.env.BREVO_HOP_API_KEY, appSlug: 'healthopenpage_website' },
+            } : {}),
+            ...(process.env.BREVO_RIFFROUTINE_API_KEY ? {
+              riffroutine: { apiKey: process.env.BREVO_RIFFROUTINE_API_KEY, appSlug: 'riffroutine_website' },
+            } : {}),
+          },
+        }
+      : undefined,
   };
 }
 

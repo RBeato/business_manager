@@ -685,6 +685,30 @@ GOOGLE_SEARCH_CONSOLE_KEY="..."
 
 ---
 
-**Last Updated**: February 6, 2026
+**Last Updated**: February 9, 2026
 **Status**: Phase 1 Complete ✅
 **Next Step**: Run setup instructions and generate first test post
+
+---
+
+## TODO: GA4 Mobile Streams Setup
+
+All apps have iOS + Android versions. Each app's GA4 property should have iOS and Android data streams added so mobile analytics flow into the same property as web.
+
+### Apps to configure:
+- [ ] **MeditNation** (Property ID: 523819246) — add iOS + Android streams
+- [ ] **Health Open Page** (Property ID: 492772686) — add iOS + Android streams
+- [ ] **Guitar Progression Generator** — create GA4 property, add iOS + Android streams
+- [ ] **SM Guitar** — create GA4 property, add iOS + Android streams
+- [ ] **Ear N Play** — create GA4 property, add iOS + Android streams
+
+### Steps per app:
+1. Go to `analytics.google.com` → Admin → select the property (or create one)
+2. Data Streams → **Add stream** → **iOS**
+   - Enter Apple Bundle ID
+   - Follow Firebase/GA4 SDK setup if not already integrated
+3. Data Streams → **Add stream** → **Android**
+   - Enter Google package name
+   - Follow Firebase/GA4 SDK setup if not already integrated
+4. Update `.env` with GA4 Property ID if new
+5. Run `npm run setup:ga4` to sync to Supabase

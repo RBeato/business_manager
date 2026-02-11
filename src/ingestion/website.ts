@@ -209,86 +209,92 @@ export async function ingestWebsiteData(
     for (const app of webApps) {
       if (!app.ga4_property_id) continue;
 
-      // Fetch traffic by source/medium
-      const trafficData = await fetchTrafficBySource(
-        app.ga4_property_id,
-        context.date
-      );
+      try {
+        // Fetch traffic by source/medium
+        const trafficData = await fetchTrafficBySource(
+          app.ga4_property_id,
+          context.date
+        );
 
-      // Fetch conversions (aggregate)
-      const conversions = await fetchConversions(
-        app.ga4_property_id,
-        context.date
-      );
+        // Fetch conversions (aggregate)
+        const conversions = await fetchConversions(
+          app.ga4_property_id,
+          context.date
+        );
 
-      // First, upsert total traffic (no source/medium filter)
-      const totalTraffic = trafficData.reduce(
-        (acc, row) => ({
-          sessions: acc.sessions + row.sessions,
-          users: acc.users + row.users,
-          newUsers: acc.newUsers + row.newUsers,
-          pageviews: acc.pageviews + row.pageviews,
-          avgSessionDuration:
-            (acc.avgSessionDuration * acc.sessions +
-              row.avgSessionDuration * row.sessions) /
-            (acc.sessions + row.sessions || 1),
-          bounceRate:
-            (acc.bounceRate * acc.sessions + row.bounceRate * row.sessions) /
-            (acc.sessions + row.sessions || 1),
-          pagesPerSession:
-            (acc.pagesPerSession * acc.sessions +
-              row.pagesPerSession * row.sessions) /
-            (acc.sessions + row.sessions || 1),
-        }),
-        {
-          sessions: 0,
-          users: 0,
-          newUsers: 0,
-          pageviews: 0,
-          avgSessionDuration: 0,
-          bounceRate: 0,
-          pagesPerSession: 0,
-        }
-      );
+        // First, upsert total traffic (no source/medium filter)
+        const totalTraffic = trafficData.reduce(
+          (acc, row) => ({
+            sessions: acc.sessions + row.sessions,
+            users: acc.users + row.users,
+            newUsers: acc.newUsers + row.newUsers,
+            pageviews: acc.pageviews + row.pageviews,
+            avgSessionDuration:
+              (acc.avgSessionDuration * acc.sessions +
+                row.avgSessionDuration * row.sessions) /
+              (acc.sessions + row.sessions || 1),
+            bounceRate:
+              (acc.bounceRate * acc.sessions + row.bounceRate * row.sessions) /
+              (acc.sessions + row.sessions || 1),
+            pagesPerSession:
+              (acc.pagesPerSession * acc.sessions +
+                row.pagesPerSession * row.sessions) /
+              (acc.sessions + row.sessions || 1),
+          }),
+          {
+            sessions: 0,
+            users: 0,
+            newUsers: 0,
+            pageviews: 0,
+            avgSessionDuration: 0,
+            bounceRate: 0,
+            pagesPerSession: 0,
+          }
+        );
 
-      await upsertDailyWebsiteTraffic({
-        app_id: app.id,
-        date: dateStr,
-        source: undefined,
-        medium: undefined,
-        campaign: undefined,
-        sessions: totalTraffic.sessions,
-        users: totalTraffic.users,
-        new_users: totalTraffic.newUsers,
-        pageviews: totalTraffic.pageviews,
-        avg_session_duration_seconds: Math.round(totalTraffic.avgSessionDuration),
-        bounce_rate: totalTraffic.bounceRate,
-        pages_per_session: totalTraffic.pagesPerSession,
-        signups: conversions.signups,
-        app_downloads: conversions.appDownloads,
-        purchases: conversions.purchases,
-        raw_data: { totalTraffic, conversions } as unknown as Record<string, unknown>,
-      });
-      recordsProcessed++;
-
-      // Then upsert traffic by source/medium
-      for (const traffic of trafficData) {
         await upsertDailyWebsiteTraffic({
           app_id: app.id,
           date: dateStr,
-          source: traffic.source,
-          medium: traffic.medium,
-          campaign: undefined,
-          sessions: traffic.sessions,
-          users: traffic.users,
-          new_users: traffic.newUsers,
-          pageviews: traffic.pageviews,
-          avg_session_duration_seconds: Math.round(traffic.avgSessionDuration),
-          bounce_rate: traffic.bounceRate,
-          pages_per_session: traffic.pagesPerSession,
-          raw_data: traffic as unknown as Record<string, unknown>,
+          source: '', // Aggregate - must be non-null for UNIQUE constraint upsert
+          medium: '',
+          campaign: '',
+          sessions: totalTraffic.sessions,
+          users: totalTraffic.users,
+          new_users: totalTraffic.newUsers,
+          pageviews: totalTraffic.pageviews,
+          avg_session_duration_seconds: Math.round(totalTraffic.avgSessionDuration),
+          bounce_rate: totalTraffic.bounceRate,
+          pages_per_session: totalTraffic.pagesPerSession,
+          signups: conversions.signups,
+          app_downloads: conversions.appDownloads,
+          purchases: conversions.purchases,
+          raw_data: { totalTraffic, conversions } as unknown as Record<string, unknown>,
         });
         recordsProcessed++;
+
+        // Then upsert traffic by source/medium
+        for (const traffic of trafficData) {
+          await upsertDailyWebsiteTraffic({
+            app_id: app.id,
+            date: dateStr,
+            source: traffic.source,
+            medium: traffic.medium,
+            campaign: '', // Must be non-null for UNIQUE constraint upsert
+            sessions: traffic.sessions,
+            users: traffic.users,
+            new_users: traffic.newUsers,
+            pageviews: traffic.pageviews,
+            avg_session_duration_seconds: Math.round(traffic.avgSessionDuration),
+            bounce_rate: traffic.bounceRate,
+            pages_per_session: traffic.pagesPerSession,
+            raw_data: traffic as unknown as Record<string, unknown>,
+          });
+          recordsProcessed++;
+        }
+      } catch (error) {
+        // Per-app errors are non-fatal — log and continue with other apps
+        const msg = error instanceof Error ? error.message.split('\n')[0] : String(error);
+        console.warn(`  Skipping ${app.slug}: ${msg}`);
       }
 
       // Rate limiting

@@ -1,15 +1,13 @@
-import { Resend } from 'resend';
-import { getConfig } from '../config/index.js';
-import { updateIngestionLog, getSupabaseClient } from '../db/client.js';
-import { generateTextEmail } from '../reports/templates/daily-email.js';
-import type { GeneratedReport } from '../types/index.js';
+/**
+ * Report Delivery via Telegram
+ *
+ * Sends daily reports and alerts as Telegram messages.
+ * Replaced Resend email integration.
+ */
 
-interface EmailOptions {
-  to: string[];
-  subject: string;
-  html: string;
-  text?: string;
-}
+import { sendTelegramMessage, sendAndLogNotification } from './telegram.js';
+import { getSupabaseClient } from '../db/client.js';
+import type { GeneratedReport } from '../types/index.js';
 
 interface SendResult {
   success: boolean;
@@ -17,200 +15,127 @@ interface SendResult {
   error?: string;
 }
 
-export async function sendEmail(options: EmailOptions): Promise<SendResult> {
-  const config = getConfig();
+/**
+ * Format a GeneratedReport into a concise Telegram message
+ */
+function formatReportForTelegram(report: GeneratedReport): string {
+  const m = report.metrics;
+  const lines: string[] = [];
 
-  if (!config.resend) {
-    return {
-      success: false,
-      error: 'Resend not configured',
-    };
+  lines.push(`📊 *Daily Business Report — ${report.date}*`);
+  lines.push('');
+
+  // Revenue
+  if (m.total_revenue !== undefined) {
+    lines.push(`💰 Revenue: $${m.total_revenue.toFixed(2)}`);
+  }
+  if (m.total_mrr !== undefined && m.total_mrr > 0) {
+    lines.push(`📈 MRR: $${m.total_mrr.toFixed(2)}`);
   }
 
-  const resend = new Resend(config.resend.apiKey);
+  // Installs
+  if (m.total_installs !== undefined && m.total_installs > 0) {
+    lines.push(`📲 Installs: ${m.total_installs}`);
+  }
 
-  try {
-    const result = await resend.emails.send({
-      from: config.resend.fromEmail,
-      to: options.to,
-      subject: options.subject,
-      html: options.html,
-      text: options.text,
-    });
+  // DAU
+  if (m.total_dau !== undefined && m.total_dau > 0) {
+    lines.push(`👥 DAU: ${m.total_dau}`);
+  }
 
-    if (result.error) {
-      return {
-        success: false,
-        error: result.error.message,
-      };
+  // Costs
+  if (m.total_costs !== undefined && m.total_costs > 0) {
+    lines.push(`💸 Costs: $${m.total_costs.toFixed(2)}`);
+  }
+
+  // Per-app breakdown
+  if (m.apps && m.apps.length > 0) {
+    lines.push('');
+    lines.push('*Per-app:*');
+    for (const app of m.apps) {
+      const parts: string[] = [];
+      if (app.revenue > 0) parts.push(`$${app.revenue.toFixed(2)}`);
+      if (app.installs > 0) parts.push(`${app.installs} installs`);
+      if (app.dau > 0) parts.push(`${app.dau} DAU`);
+      if (parts.length > 0) {
+        lines.push(`  • ${app.app_name}: ${parts.join(', ')}`);
+      }
     }
-
-    return {
-      success: true,
-      id: result.data?.id,
-    };
-  } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : String(error);
-    return {
-      success: false,
-      error: errorMessage,
-    };
   }
+
+  // Insights
+  if (report.insights && report.insights.length > 0) {
+    lines.push('');
+    lines.push('*Insights:*');
+    for (const insight of report.insights) {
+      lines.push(`  ${insight.type === 'positive' ? '✅' : insight.type === 'negative' ? '⚠️' : 'ℹ️'} ${insight.message}`);
+    }
+  }
+
+  return lines.join('\n');
 }
 
 export async function sendDailyReport(report: GeneratedReport): Promise<SendResult> {
-  const config = getConfig();
+  const text = formatReportForTelegram(report);
 
-  const recipients = config.email?.recipients || [];
-  if (recipients.length === 0) {
-    return {
-      success: false,
-      error: 'No email recipients configured',
-    };
-  }
+  console.log('Sending report via Telegram...');
 
-  const subject = `Daily Business Report - ${report.date}`;
-
-  // Generate plain text version
-  const textContent = generateTextEmail({
-    date: report.date,
-    metrics: report.metrics,
-    insights: report.insights,
-    trends: [],
-  });
-
-  console.log(`Sending report to ${recipients.length} recipients...`);
-
-  const result = await sendEmail({
-    to: recipients,
-    subject,
-    html: report.html,
-    text: textContent,
+  const result = await sendAndLogNotification('daily_report', {
+    text,
+    parseMode: 'Markdown',
   });
 
   if (result.success) {
-    // Update report with email sent timestamp
+    // Update report with delivery timestamp
     const supabase = getSupabaseClient();
     await supabase
       .from('daily_reports')
       .update({
         email_sent_at: new Date().toISOString(),
-        email_recipients: recipients,
+        email_recipients: ['telegram'],
       })
       .eq('date', report.date)
       .eq('report_type', report.type);
 
-    console.log(`Report sent successfully (ID: ${result.id})`);
-  } else {
-    console.error(`Failed to send report: ${result.error}`);
+    console.log(`Report sent via Telegram (message ID: ${result.messageId})`);
+    return { success: true, id: String(result.messageId) };
   }
 
-  return result;
+  return { success: false, error: result.error };
 }
 
-// Send a simple notification email
+// Send a simple notification
 export async function sendNotification(
   subject: string,
   message: string,
-  recipients?: string[]
 ): Promise<SendResult> {
-  const config = getConfig();
+  const text = `*${subject}*\n\n${message}`;
 
-  const to = recipients || config.email?.recipients || [];
-  if (to.length === 0) {
-    return {
-      success: false,
-      error: 'No recipients',
-    };
-  }
-
-  const html = `
-<!DOCTYPE html>
-<html>
-<head>
-  <style>
-    body { font-family: sans-serif; padding: 20px; }
-    .message { background: #f3f4f6; padding: 20px; border-radius: 8px; }
-  </style>
-</head>
-<body>
-  <div class="message">
-    <h2>${subject}</h2>
-    <p>${message}</p>
-  </div>
-  <p style="color: #9ca3af; font-size: 12px; margin-top: 20px;">
-    Business Metrics Hub
-  </p>
-</body>
-</html>
-`;
-
-  return sendEmail({
-    to,
-    subject,
-    html,
-    text: `${subject}\n\n${message}`,
-  });
+  const result = await sendTelegramMessage({ text, parseMode: 'Markdown' });
+  return {
+    success: result.success,
+    error: result.error,
+  };
 }
 
 // Send an alert for critical issues
 export async function sendAlert(
   title: string,
   details: string,
-  severity: 'warning' | 'critical' = 'warning'
+  severity: 'warning' | 'critical' = 'warning',
 ): Promise<SendResult> {
-  const config = getConfig();
+  const icon = severity === 'critical' ? '🚨' : '⚠️';
+  // Strip HTML tags for Telegram plain text
+  const cleanDetails = details.replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim();
+  const text = `${icon} *${title}*\n\n${cleanDetails}`;
 
-  const to = config.email?.recipients || [];
-  if (to.length === 0) {
-    return {
-      success: false,
-      error: 'No recipients',
-    };
-  }
-
-  const backgroundColor = severity === 'critical' ? '#fef2f2' : '#fef3c7';
-  const borderColor = severity === 'critical' ? '#ef4444' : '#f59e0b';
-  const icon = severity === 'critical' ? '&#x1F6A8;' : '&#x26A0;';
-
-  const html = `
-<!DOCTYPE html>
-<html>
-<head>
-  <style>
-    body { font-family: sans-serif; padding: 20px; }
-    .alert {
-      background: ${backgroundColor};
-      border-left: 4px solid ${borderColor};
-      padding: 20px;
-      border-radius: 0 8px 8px 0;
-    }
-    .alert-title {
-      font-size: 18px;
-      font-weight: bold;
-      margin-bottom: 12px;
-    }
-    .alert-details {
-      color: #4b5563;
-    }
-  </style>
-</head>
-<body>
-  <div class="alert">
-    <div class="alert-title">${icon} ${title}</div>
-    <div class="alert-details">${details}</div>
-  </div>
-  <p style="color: #9ca3af; font-size: 12px; margin-top: 20px;">
-    Business Metrics Hub Alert
-  </p>
-</body>
-</html>
-`;
-
-  return sendEmail({
-    to,
-    subject: `[${severity.toUpperCase()}] ${title}`,
-    html,
-    text: `[${severity.toUpperCase()}] ${title}\n\n${details}`,
+  const result = await sendAndLogNotification('alert', {
+    text,
+    parseMode: 'Markdown',
   });
+
+  return {
+    success: result.success,
+    error: result.error,
+  };
 }
