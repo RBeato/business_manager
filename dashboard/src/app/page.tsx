@@ -561,9 +561,9 @@ export default function Dashboard() {
             <MetricCard title={`Costs`} value={formatCurrency(totalCostsPeriod, currency)} subtitle={periodLabel} color="red" />
             <MetricCard
               title="Net Margin"
-              value={totalRevenuePeriod > 0 ? `${((totalRevenuePeriod - totalCostsPeriod) / totalRevenuePeriod * 100).toFixed(0)}%` : '—'}
-              subtitle={periodLabel}
-              color={totalRevenuePeriod > totalCostsPeriod ? 'green' : 'red'}
+              value={totalRevenuePeriod > 0 ? `${((totalRevenuePeriod * 0.85 - totalCostsPeriod) / totalRevenuePeriod * 100).toFixed(0)}%` : '—'}
+              subtitle={`after fees, ${periodLabel}`}
+              color={totalRevenuePeriod * 0.85 > totalCostsPeriod ? 'green' : 'red'}
             />
           </div>
         </section>

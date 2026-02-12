@@ -29,20 +29,25 @@ interface RevenueCatOverview {
   active_users: number;
 }
 
-interface RevenueCatChartData {
+interface DailyValue {
   date: string;
   value: number;
 }
 
-interface RevenueCatMetrics {
-  active_subscribers: RevenueCatChartData[];
-  active_trials: RevenueCatChartData[];
-  new_trials: RevenueCatChartData[];
-  trial_conversions: RevenueCatChartData[];
-  new_customers: RevenueCatChartData[];
-  churned_customers: RevenueCatChartData[];
-  revenue: RevenueCatChartData[];
-  mrr: RevenueCatChartData[];
+interface ChartResponse {
+  values: number[][];  // [[timestamp, value1, value2?], ...]
+  segments: { display_name: string }[];
+  resolution: string;
+}
+
+interface DailyMetrics {
+  active_subscribers: DailyValue[];
+  active_trials: DailyValue[];
+  new_trials: DailyValue[];
+  trial_conversions: DailyValue[];
+  new_customers: DailyValue[];
+  revenue: DailyValue[];
+  mrr: DailyValue[];
 }
 
 async function fetchWithAuth(
@@ -104,86 +109,72 @@ async function fetchOverview(
   }
 }
 
-async function fetchMetrics(
+/** Convert chart response [[timestamp, value, ...], ...] to [{date, value}] */
+function parseChartValues(data: ChartResponse): DailyValue[] {
+  if (!data.values?.length) return [];
+  return data.values.map(row => ({
+    date: formatDate(new Date(row[0] * 1000)),
+    value: row[1] ?? 0,
+  }));
+}
+
+async function fetchChartMetrics(
   app: App,
   date: Date,
   apiKey: string
-): Promise<RevenueCatMetrics | null> {
+): Promise<DailyMetrics | null> {
   if (!app.revenuecat_app_id) return null;
 
   const dateStr = formatDate(date);
   const prevDate = new Date(date);
-  prevDate.setDate(prevDate.getDate() - 30); // Fetch last 30 days for context
+  prevDate.setDate(prevDate.getDate() - 7); // Fetch last 7 days
   const startDateStr = formatDate(prevDate);
 
-  try {
-    // v2 API uses individual metric endpoints
-    // Try fetching the main metrics we care about
-    const metricsToFetch = [
-      'active_subscriptions',
-      'active_trials',
-      'new_trials',
-      'trial_conversion',
-      'revenue',
-      'mrr',
-    ];
+  // Charts API metric names → our internal keys
+  const chartsToFetch: [string, keyof DailyMetrics][] = [
+    ['revenue', 'revenue'],
+    ['actives', 'active_subscribers'],
+    ['customers_new', 'new_customers'],
+    ['trials_new', 'new_trials'],
+    ['trial_conversion_rate', 'trial_conversions'],
+    ['mrr', 'mrr'],
+  ];
 
-    const results: Partial<RevenueCatMetrics> = {};
+  const results: Partial<DailyMetrics> = {};
+  let fetched = 0;
 
-    for (const metric of metricsToFetch) {
-      try {
-        const response = await fetchWithAuth(
-          `/projects/${app.revenuecat_app_id}/metrics/${metric}?start_date=${startDateStr}&end_date=${dateStr}&resolution=day`,
-          apiKey,
-          'v2'
-        );
-        const data = await response.json() as { values: RevenueCatChartData[] };
-
-        // Map metric names to our expected format
-        const keyMap: Record<string, keyof RevenueCatMetrics> = {
-          'active_subscriptions': 'active_subscribers',
-          'active_trials': 'active_trials',
-          'new_trials': 'new_trials',
-          'trial_conversion': 'trial_conversions',
-          'revenue': 'revenue',
-          'mrr': 'mrr',
-        };
-
-        const key = keyMap[metric];
-        if (key && data.values) {
-          results[key] = data.values;
-        }
-      } catch {
-        // Individual metric failed, continue with others
-      }
-
-      // Rate limiting between metric calls
-      await new Promise((resolve) => setTimeout(resolve, 100));
+  for (const [chartName, key] of chartsToFetch) {
+    try {
+      const url = `/projects/${app.revenuecat_app_id}/charts/${chartName}?start_date=${startDateStr}&end_date=${dateStr}&realtime=false`;
+      const response = await fetchWithAuth(url, apiKey, 'v2');
+      const data = await response.json() as ChartResponse;
+      results[key] = parseChartValues(data);
+      fetched++;
+    } catch {
+      // Individual chart failed, continue with others
     }
 
-    // If we got any data, return it
-    if (Object.keys(results).length > 0) {
-      return {
-        active_subscribers: results.active_subscribers || [],
-        active_trials: results.active_trials || [],
-        new_trials: results.new_trials || [],
-        trial_conversions: results.trial_conversions || [],
-        new_customers: [],
-        churned_customers: [],
-        revenue: results.revenue || [],
-        mrr: results.mrr || [],
-      };
-    }
-
-    return null;
-  } catch (error) {
-    console.warn(`Could not fetch RevenueCat metrics for ${app.slug}:`, error);
-    return null;
+    // Rate limiting between chart calls
+    await new Promise((resolve) => setTimeout(resolve, 100));
   }
+
+  if (fetched > 0) {
+    return {
+      active_subscribers: results.active_subscribers || [],
+      active_trials: results.active_trials || [],
+      new_trials: results.new_trials || [],
+      trial_conversions: results.trial_conversions || [],
+      new_customers: results.new_customers || [],
+      revenue: results.revenue || [],
+      mrr: results.mrr || [],
+    };
+  }
+
+  return null;
 }
 
 function getValueForDate(
-  data: RevenueCatChartData[],
+  data: DailyValue[],
   dateStr: string
 ): number {
   const entry = data.find((d) => d.date === dateStr);
@@ -237,18 +228,41 @@ export async function ingestRevenueCatData(
         continue;
       }
 
-      console.log(`RevenueCat ${app.slug}: ${overview.active_subscribers_count} subs, $${overview.revenue} revenue (28d), $${overview.mrr} MRR`);
+      console.log(`RevenueCat ${app.slug}: ${overview.active_subscribers_count} active subs, $${overview.mrr} MRR (overview)`);
 
-      const activeSubscribers = overview.active_subscribers_count;
-      const activeTrials = overview.active_trials_count;
-      const mrr = overview.mrr;
-      const newCustomers = overview.new_customers;
+      // Fetch daily charts data for accurate metrics
+      const metrics = await fetchChartMetrics(app, context.date, apiKey);
 
-      // Try to get daily timeseries data for accurate revenue
-      const metrics = await fetchMetrics(app, context.date, apiKey);
+      // Use charts data when available, fall back to overview
       const dailyRevenue = metrics?.revenue?.length
         ? getValueForDate(metrics.revenue, dateStr)
         : overview.revenue / 28; // Approximate daily from 28-day aggregate
+
+      // Point-in-time snapshots from charts, fallback to overview
+      const activeSubscribers = metrics?.active_subscribers?.length
+        ? getValueForDate(metrics.active_subscribers, dateStr)
+        : overview.active_subscribers_count;
+      const activeTrials = metrics?.active_trials?.length
+        ? getValueForDate(metrics.active_trials, dateStr)
+        : overview.active_trials_count;
+
+      // MRR: charts API returns monthly resolution only, so always use overview
+      // (overview.mrr is the current MRR which is correct for daily ingestion)
+      const mrr = overview.mrr;
+
+      // Daily event counts from charts (accurate per-day values)
+      const dailyNewCustomers = metrics?.new_customers?.length
+        ? getValueForDate(metrics.new_customers, dateStr)
+        : Math.round(overview.new_customers / 28);
+      const dailyNewTrials = metrics?.new_trials?.length
+        ? getValueForDate(metrics.new_trials, dateStr)
+        : 0;
+      const dailyTrialConversions = metrics?.trial_conversions?.length
+        ? getValueForDate(metrics.trial_conversions, dateStr)
+        : 0;
+
+      const dataSource = metrics ? 'revenuecat_v2_charts' : 'revenuecat_v2_overview';
+      console.log(`  ${app.slug} [${dataSource}]: ${activeSubscribers} subs, ${dailyNewCustomers} new, $${dailyRevenue.toFixed(2)} rev, $${mrr.toFixed(2)} MRR`);
 
       // Only count mobile platforms (ios/android) for splitting
       const mobilePlatforms = (['ios', 'android'] as const).filter(
@@ -267,15 +281,15 @@ export async function ingestRevenueCatData(
           product_id: '', // Aggregate across all products
           active_subscriptions: Math.round(activeSubscribers / platformCount),
           active_trials: Math.round(activeTrials / platformCount),
-          new_trials: 0, // Not available in overview
-          trial_conversions: 0, // Not available in overview
-          new_subscriptions: Math.round(newCustomers / platformCount),
-          cancellations: 0, // Not available in overview
+          new_trials: Math.round(dailyNewTrials / platformCount),
+          trial_conversions: Math.round(dailyTrialConversions / platformCount),
+          new_subscriptions: Math.round(dailyNewCustomers / platformCount),
+          cancellations: 0, // Not available via API
           mrr: mrr / platformCount,
           raw_data: {
             metrics_date: dateStr,
             overview,
-            source: metrics?.revenue?.length ? 'revenuecat_v2_timeseries' : 'revenuecat_v2_overview',
+            source: dataSource,
           } as unknown as Record<string, unknown>,
         });
         recordsProcessed++;
