@@ -58,7 +58,7 @@ async function fetchSearchAnalytics(
         endDate: dateStr,
         dimensions,
         rowLimit,
-        dataState: 'final',
+        dataState: 'all',
       }),
     }
   );

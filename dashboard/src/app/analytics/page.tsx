@@ -45,6 +45,8 @@ export default function AnalyticsPage() {
   const [period, setPeriod] = useState<TimePeriod>('7d')
   const [selectedSite, setSelectedSite] = useState<string>('all')
   const [isDark, setIsDark] = useState(false)
+  const [exporting, setExporting] = useState(false)
+  const [exportFormat, setExportFormat] = useState<'xlsx' | 'csv'>('csv')
 
   useEffect(() => {
     setIsDark(document.documentElement.classList.contains('dark'))
@@ -75,12 +77,37 @@ export default function AnalyticsPage() {
     fetchData()
   }, [period])
 
+  async function handleExport() {
+    setExporting(true)
+    try {
+      const endDate = format(new Date(), 'yyyy-MM-dd')
+      const startDate = format(subDays(new Date(), PERIOD_DAYS[period]), 'yyyy-MM-dd')
+      const res = await fetch(`/api/export?startDate=${startDate}&endDate=${endDate}&format=${exportFormat}`)
+      if (!res.ok) throw new Error('Export failed')
+      const blob = await res.blob()
+      const url = window.URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      const ext = exportFormat === 'csv' ? 'zip' : 'xlsx'
+      a.download = `business-metrics_${startDate}_${endDate}.${ext}`
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      window.URL.revokeObjectURL(url)
+    } catch (err) {
+      console.error('Export error:', err)
+      alert('Failed to export data. Please try again.')
+    } finally {
+      setExporting(false)
+    }
+  }
+
   const webApps = apps.filter(a => a.type === 'web')
   const filteredApps = selectedSite === 'all' ? webApps : webApps.filter(a => a.slug === selectedSite)
   const filteredAppIds = new Set(filteredApps.map(a => a.id))
 
-  // --- GSC aggregates (query=null, page=null rows) ---
-  const gscAggregates = gscData.filter(r => r.query === null && r.page === null && filteredAppIds.has(r.app_id))
+  // --- GSC aggregates (query='', page='' rows — empty string = aggregate) ---
+  const gscAggregates = gscData.filter(r => !r.query && !r.page && filteredAppIds.has(r.app_id))
   const totalImpressions = gscAggregates.reduce((s, r) => s + Number(r.impressions || 0), 0)
   const totalClicks = gscAggregates.reduce((s, r) => s + Number(r.clicks || 0), 0)
   const avgCTR = totalImpressions > 0 ? totalClicks / totalImpressions : 0
@@ -90,7 +117,7 @@ export default function AnalyticsPage() {
 
   // --- GSC top queries ---
   const topQueries = gscData
-    .filter(r => r.query !== null && r.page === null && filteredAppIds.has(r.app_id))
+    .filter(r => r.query && !r.page && filteredAppIds.has(r.app_id))
     .reduce((acc, r) => {
       const key = r.query!
       const existing = acc.get(key)
@@ -118,7 +145,7 @@ export default function AnalyticsPage() {
 
   // --- GSC top pages ---
   const topPages = gscData
-    .filter(r => r.page !== null && r.query === null && filteredAppIds.has(r.app_id))
+    .filter(r => r.page && !r.query && filteredAppIds.has(r.app_id))
     .reduce((acc, r) => {
       const key = r.page!
       const existing = acc.get(key)
@@ -157,7 +184,7 @@ export default function AnalyticsPage() {
   }, [] as { date: string; clicks: number; impressions: number }[]).sort((a, b) => a.date.localeCompare(b.date))
 
   // --- GA4 website traffic aggregates ---
-  const filteredTraffic = trafficData.filter(r => filteredAppIds.has(r.app_id) && r.source === null)
+  const filteredTraffic = trafficData.filter(r => filteredAppIds.has(r.app_id) && !r.source)
   const totalSessions = filteredTraffic.reduce((s, r) => s + Number(r.sessions || 0), 0)
   const totalPageviews = filteredTraffic.reduce((s, r) => s + Number(r.pageviews || 0), 0)
   const totalUsers = filteredTraffic.reduce((s, r) => s + Number(r.users || 0), 0)
@@ -185,7 +212,7 @@ export default function AnalyticsPage() {
 
   // --- GA4 traffic by source ---
   const trafficBySource = trafficData
-    .filter(r => filteredAppIds.has(r.app_id) && r.source !== null)
+    .filter(r => filteredAppIds.has(r.app_id) && r.source)
     .reduce((acc, r) => {
       const key = `${r.source} / ${r.medium || '(none)'}`
       const existing = acc.get(key)
@@ -214,6 +241,24 @@ export default function AnalyticsPage() {
   const avgUmamiBounce = filteredUmami.length > 0
     ? filteredUmami.reduce((s, r) => s + Number(r.bounce_rate || 0), 0) / filteredUmami.length
     : 0
+
+  // Umami trend by date
+  const umamiByDate = filteredUmami.reduce((acc, r) => {
+    const existing = acc.find(a => a.date === r.date)
+    if (existing) {
+      existing.visitors += Number(r.visitors || 0)
+      existing.pageviews += Number(r.pageviews || 0)
+      existing.visits += Number(r.visits || 0)
+    } else {
+      acc.push({
+        date: r.date,
+        visitors: Number(r.visitors || 0),
+        pageviews: Number(r.pageviews || 0),
+        visits: Number(r.visits || 0),
+      })
+    }
+    return acc
+  }, [] as { date: string; visitors: number; pageviews: number; visits: number }[]).sort((a, b) => a.date.localeCompare(b.date))
 
   // Umami top pages (merge across days)
   const umamiTopPages = filteredUmami.reduce((acc, r) => {
@@ -299,6 +344,41 @@ export default function AnalyticsPage() {
                     {p}
                   </button>
                 ))}
+              </div>
+              {/* Export format toggle + button */}
+              <div className="inline-flex items-center rounded-lg border border-gray-300 dark:border-gray-600 overflow-hidden">
+                <div className="flex border-r border-gray-300 dark:border-gray-600">
+                  {(['csv', 'xlsx'] as const).map(fmt => (
+                    <button
+                      key={fmt}
+                      onClick={() => setExportFormat(fmt)}
+                      className={`px-3 py-1.5 text-xs font-medium uppercase transition-colors ${
+                        exportFormat === fmt
+                          ? 'bg-blue-600 text-white'
+                          : 'bg-white dark:bg-gray-800 text-gray-500 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700'
+                      }`}
+                    >
+                      {fmt}
+                    </button>
+                  ))}
+                </div>
+                <button
+                  onClick={handleExport}
+                  disabled={exporting}
+                  className="inline-flex items-center gap-2 px-4 py-1.5 text-sm font-medium bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {exporting ? (
+                    <svg className="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                    </svg>
+                  ) : (
+                    <svg className="h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" />
+                    </svg>
+                  )}
+                  {exporting ? 'Exporting...' : 'Export'}
+                </button>
               </div>
             </div>
           </div>
@@ -534,6 +614,28 @@ export default function AnalyticsPage() {
                 <p className="text-2xl font-bold text-gray-900 dark:text-gray-100 mt-2">{avgUmamiBounce.toFixed(1)}%</p>
               </div>
             </div>
+
+            {/* Umami trend chart */}
+            {umamiByDate.length > 0 && (
+              <div className="bg-white dark:bg-gray-900 p-6 rounded-xl border border-gray-200 dark:border-gray-800 mb-6">
+                <h3 className="font-semibold text-gray-900 dark:text-gray-100 mb-4">Visitors, Pageviews & Visits</h3>
+                <ResponsiveContainer width="100%" height={280}>
+                  <LineChart data={umamiByDate}>
+                    <CartesianGrid strokeDasharray="3 3" stroke={chartGridColor} />
+                    <XAxis dataKey="date" tick={{ fontSize: 12, fill: chartTickColor }} tickFormatter={v => format(new Date(v), 'MMM d')} />
+                    <YAxis tick={{ fontSize: 12, fill: chartTickColor }} />
+                    <Tooltip
+                      labelFormatter={l => format(new Date(l), 'MMM d, yyyy')}
+                      contentStyle={{ backgroundColor: chartTooltipBg, border: `1px solid ${chartTooltipBorder}`, borderRadius: '8px' }}
+                      labelStyle={{ color: isDark ? '#e5e7eb' : '#111827' }}
+                    />
+                    <Line type="monotone" dataKey="visitors" stroke="#06b6d4" strokeWidth={2} dot={false} name="Visitors" />
+                    <Line type="monotone" dataKey="pageviews" stroke="#8b5cf6" strokeWidth={2} dot={false} name="Pageviews" />
+                    <Line type="monotone" dataKey="visits" stroke="#f59e0b" strokeWidth={2} dot={false} name="Visits" />
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+            )}
 
             {/* Umami breakdown tables */}
             <div className="grid md:grid-cols-2 gap-6">

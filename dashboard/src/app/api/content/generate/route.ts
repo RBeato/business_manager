@@ -32,7 +32,12 @@ type Website = keyof typeof WEBSITE_CONFIG
 
 export async function POST(request: NextRequest) {
   const body = await request.json()
-  const { website } = body as { website: string }
+  const { website, customTopic, customKeyword, customNotes } = body as {
+    website: string
+    customTopic?: string
+    customKeyword?: string
+    customNotes?: string
+  }
 
   if (!website || !(website in WEBSITE_CONFIG)) {
     return NextResponse.json(
@@ -44,22 +49,39 @@ export async function POST(request: NextRequest) {
   const site = website as Website
   const config = WEBSITE_CONFIG[site]
 
-  // Get highest priority queued topic
-  const { data: topic, error: topicError } = await supabase
-    .from('blog_topics')
-    .select('*')
-    .eq('website', site)
-    .eq('status', 'queued')
-    .order('priority', { ascending: false })
-    .order('created_at', { ascending: true })
-    .limit(1)
-    .single()
+  let topicText: string
+  let targetKeyword: string
+  let searchVolume: number
+  let topicId: string | null = null
 
-  if (topicError || !topic) {
-    return NextResponse.json(
-      { error: `No queued topics for ${website}. Run 'npm run content:seed' to populate.` },
-      { status: 404 }
-    )
+  if (customTopic) {
+    // Custom topic provided by user
+    topicText = customTopic
+    targetKeyword = customKeyword || customTopic
+    searchVolume = 0
+  } else {
+    // Get highest priority queued topic
+    const { data: topic, error: topicError } = await supabase
+      .from('blog_topics')
+      .select('*')
+      .eq('website', site)
+      .eq('status', 'queued')
+      .order('priority', { ascending: false })
+      .order('created_at', { ascending: true })
+      .limit(1)
+      .single()
+
+    if (topicError || !topic) {
+      return NextResponse.json(
+        { error: `No queued topics for ${website}. Run 'npm run content:seed' to populate.` },
+        { status: 404 }
+      )
+    }
+
+    topicText = topic.topic
+    targetKeyword = topic.target_keyword || topic.topic
+    searchVolume = topic.search_volume || 0
+    topicId = topic.id
   }
 
   const apiKey = process.env.DEEPSEEK_API_KEY
@@ -69,17 +91,18 @@ export async function POST(request: NextRequest) {
       { status: 500 }
     )
   }
-
-  const targetKeyword = topic.target_keyword || topic.topic
-  const searchVolume = topic.search_volume || 0
   const wordCount = 1800
+
+  const notesSection = customNotes
+    ? `\n**Additional Instructions from the Author**:\n${customNotes}\n`
+    : ''
 
   const prompt = `You are an expert SEO content writer for ${config.name}, a ${config.audience} platform.
 
 **Task**: Write a comprehensive, SEO-optimized blog post.
 
-**Topic**: ${topic.topic}
-**Target Keyword**: "${targetKeyword}"
+**Topic**: ${topicText}
+**Target Keyword**: "${targetKeyword}"${notesSection}
 **Search Volume**: ${searchVolume} monthly searches
 **Target Length**: ${wordCount} words
 **Website**: ${config.url}
@@ -214,7 +237,7 @@ Generate the blog post now:`
         status: 'pending_review',
         word_count: actualWordCount,
         reading_time_minutes: readingTime,
-        generation_prompt: `Topic: ${topic.topic}\nKeyword: ${targetKeyword}`,
+        generation_prompt: `Topic: ${topicText}\nKeyword: ${targetKeyword}${customNotes ? `\nNotes: ${customNotes}` : ''}`,
         ai_model: 'deepseek-chat'
       })
       .select()
@@ -224,11 +247,13 @@ Generate the blog post now:`
       return NextResponse.json({ error: saveError.message }, { status: 500 })
     }
 
-    // Update topic status
-    await supabase
-      .from('blog_topics')
-      .update({ status: 'generated', related_blog_post_id: savedPost.id })
-      .eq('id', topic.id)
+    // Update topic status (only if we used a queued topic)
+    if (topicId) {
+      await supabase
+        .from('blog_topics')
+        .update({ status: 'generated', related_blog_post_id: savedPost.id })
+        .eq('id', topicId)
+    }
 
     return NextResponse.json(savedPost)
   } catch (err) {

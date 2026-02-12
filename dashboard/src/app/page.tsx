@@ -18,20 +18,20 @@ interface CreditStatus {
 }
 
 type Currency = 'USD' | 'EUR'
-type TimePeriod = 'day' | 'week' | 'month'
+type TimePeriod = '7d' | '14d' | '30d'
 
 const EXCHANGE_RATE_EUR = 0.92 // Approximate USD to EUR rate
 
 const PERIOD_DAYS: Record<TimePeriod, number> = {
-  day: 1,
-  week: 7,
-  month: 30,
+  '7d': 7,
+  '14d': 14,
+  '30d': 30,
 }
 
 const PERIOD_LABELS: Record<TimePeriod, string> = {
-  day: 'Yesterday',
-  week: '7 Days',
-  month: '30 Days',
+  '7d': '7 Days',
+  '14d': '14 Days',
+  '30d': '30 Days',
 }
 
 function formatCurrency(amount: number, currency: Currency = 'USD'): string {
@@ -190,7 +190,7 @@ function MetricCard({ title, value, subtitle, trend, color = 'blue' }: MetricCar
 function TimePeriodSelector({ value, onChange }: { value: TimePeriod; onChange: (period: TimePeriod) => void }) {
   return (
     <div className="inline-flex rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-100 dark:bg-gray-800 p-1">
-      {(['day', 'week', 'month'] as TimePeriod[]).map((period) => (
+      {(['7d', '14d', '30d'] as TimePeriod[]).map((period) => (
         <button
           key={period}
           onClick={() => onChange(period)}
@@ -200,7 +200,7 @@ function TimePeriodSelector({ value, onChange }: { value: TimePeriod; onChange: 
               : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200'
           }`}
         >
-          {period === 'day' ? 'Day' : period === 'week' ? 'Week' : 'Month'}
+          {period}
         </button>
       ))}
     </div>
@@ -263,7 +263,7 @@ export default function Dashboard() {
   const [creditsLoading, setCreditsLoading] = useState(true)
   const [loading, setLoading] = useState(true)
   const [currency, setCurrency] = useState<Currency>('EUR')
-  const [period, setPeriod] = useState<TimePeriod>('week')
+  const [period, setPeriod] = useState<TimePeriod>('7d')
   const [isDark, setIsDark] = useState(false)
 
   useEffect(() => {
@@ -336,8 +336,10 @@ export default function Dashboard() {
     .filter(r => r.date >= periodCutoff)
     .reduce((sum, r) => sum + Number(r.gross_revenue || 0), 0)
 
-  // Keep 30d for financial summary
-  const totalRevenue30d = revenue.reduce((sum, r) => sum + Number(r.gross_revenue || 0), 0)
+  // Revenue for financial summary (uses selected period)
+  const totalRevenue30d = revenue
+    .filter(r => r.date >= periodCutoff)
+    .reduce((sum, r) => sum + Number(r.gross_revenue || 0), 0)
 
   const currentMRR = subscriptions.length > 0
     ? subscriptions
@@ -353,7 +355,9 @@ export default function Dashboard() {
     .filter(c => c.date >= periodCutoff)
     .reduce((sum, c) => sum + Number(c.cost || 0), 0)
 
-  const totalCosts30d = costs.reduce((sum, c) => sum + Number(c.cost || 0), 0)
+  const totalCosts30d = costs
+    .filter(c => c.date >= periodCutoff)
+    .reduce((sum, c) => sum + Number(c.cost || 0), 0)
 
   const activeSubscriptions = subscriptions.length > 0
     ? subscriptions
@@ -532,7 +536,7 @@ export default function Dashboard() {
                   <span className="text-gray-300 dark:text-gray-600">|</span>
                   <span>SS: 21.4% on 70%</span>
                   <span className="text-gray-300 dark:text-gray-600">|</span>
-                  <span className="text-gray-400 dark:text-gray-500">Last 30 days</span>
+                  <span className="text-gray-400 dark:text-gray-500">Last {periodLabel}</span>
                 </div>
               </div>
             )

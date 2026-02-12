@@ -14,21 +14,29 @@ function getUmamiWebsiteIds(): Record<string, string> {
     ids['meditnation_website'] = process.env.UMAMI_MEDITNATION_WEBSITE_ID;
   }
   if (process.env.UMAMI_HEALTHOPENPAGE_WEBSITE_ID) {
-    ids['health_open_page'] = process.env.UMAMI_HEALTHOPENPAGE_WEBSITE_ID;
+    ids['healthopenpage_website'] = process.env.UMAMI_HEALTHOPENPAGE_WEBSITE_ID;
   }
   if (process.env.UMAMI_RIFFROUTINE_WEBSITE_ID) {
-    ids['riffroutine'] = process.env.UMAMI_RIFFROUTINE_WEBSITE_ID;
+    ids['riffroutine_website'] = process.env.UMAMI_RIFFROUTINE_WEBSITE_ID;
   }
 
   return ids;
 }
 
+// Umami v2+ returns flat numbers with a comparison object
 interface UmamiStatsResponse {
-  pageviews: { value: number; prev: number };
-  visitors: { value: number; prev: number };
-  visits: { value: number; prev: number };
-  bounces: { value: number; prev: number };
-  totaltime: { value: number; prev: number };
+  pageviews: number;
+  visitors: number;
+  visits: number;
+  bounces: number;
+  totaltime: number;
+  comparison?: {
+    pageviews: number;
+    visitors: number;
+    visits: number;
+    bounces: number;
+    totaltime: number;
+  };
 }
 
 interface UmamiMetricItem {
@@ -106,23 +114,23 @@ async function ingestForApp(
   // Fetch stats and all metric breakdowns in parallel
   const [stats, topPages, topReferrers, topCountries, topBrowsers] = await Promise.all([
     fetchStats(apiUrl, token, websiteId, startAt, endAt),
-    fetchMetrics(apiUrl, token, websiteId, startAt, endAt, 'url', 20),
+    fetchMetrics(apiUrl, token, websiteId, startAt, endAt, 'path', 20),
     fetchMetrics(apiUrl, token, websiteId, startAt, endAt, 'referrer', 20),
     fetchMetrics(apiUrl, token, websiteId, startAt, endAt, 'country', 20),
     fetchMetrics(apiUrl, token, websiteId, startAt, endAt, 'browser', 20),
   ]);
 
   // Calculate bounce rate and avg visit duration
-  const visits = stats.visits.value || 0;
-  const bounceRate = visits > 0 ? (stats.bounces.value / visits) * 100 : 0;
-  const avgDuration = visits > 0 ? Math.round(stats.totaltime.value / visits) : 0;
+  const visits = stats.visits || 0;
+  const bounceRate = visits > 0 ? (stats.bounces / visits) * 100 : 0;
+  const avgDuration = visits > 0 ? Math.round(stats.totaltime / visits) : 0;
 
   await upsertDailyUmamiStats({
     app_id: app.id,
     date: dateStr,
     website_id: websiteId,
-    pageviews: stats.pageviews.value,
-    visitors: stats.visitors.value,
+    pageviews: stats.pageviews,
+    visitors: stats.visitors,
     visits: visits,
     bounce_rate: bounceRate,
     avg_visit_duration: avgDuration,

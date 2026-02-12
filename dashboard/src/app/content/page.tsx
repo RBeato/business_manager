@@ -92,6 +92,18 @@ export default function ContentPage() {
   const [reviewNotes, setReviewNotes] = useState('')
   const [actionLoading, setActionLoading] = useState(false)
   const [showTopics, setShowTopics] = useState(false)
+  const [showCustomForm, setShowCustomForm] = useState(false)
+  const [customWebsite, setCustomWebsite] = useState<Website>('healthopenpage')
+  const [customTopic, setCustomTopic] = useState('')
+  const [customKeyword, setCustomKeyword] = useState('')
+  const [customNotes, setCustomNotes] = useState('')
+  const [publishing, setPublishing] = useState(false)
+  const [approvedCount, setApprovedCount] = useState(0)
+  const [publishResult, setPublishResult] = useState<{
+    summary: { total: number; succeeded: number; failed: number }
+    published: Array<{ postId: string; title: string; website: string; prUrl: string }>
+    errors: Array<{ postId: string; title: string; website: string; error: string }>
+  } | null>(null)
 
   const fetchPosts = useCallback(async () => {
     const params = new URLSearchParams()
@@ -117,14 +129,22 @@ export default function ContentPage() {
     }
   }, [filterWebsite])
 
+  const fetchApprovedCount = useCallback(async () => {
+    const res = await fetch('/api/content/publish')
+    if (res.ok) {
+      const data = await res.json()
+      setApprovedCount(data.approvedCount)
+    }
+  }, [])
+
   useEffect(() => {
     async function load() {
       setLoading(true)
-      await Promise.all([fetchPosts(), fetchTopics()])
+      await Promise.all([fetchPosts(), fetchTopics(), fetchApprovedCount()])
       setLoading(false)
     }
     load()
-  }, [fetchPosts, fetchTopics])
+  }, [fetchPosts, fetchTopics, fetchApprovedCount])
 
   // Load full post when selected
   useEffect(() => {
@@ -155,7 +175,38 @@ export default function ContentPage() {
         body: JSON.stringify({ website }),
       })
       if (res.ok) {
-        await Promise.all([fetchPosts(), fetchTopics()])
+        await Promise.all([fetchPosts(), fetchTopics(), fetchApprovedCount()])
+      } else {
+        const err = await res.json()
+        alert(`Generation failed: ${err.error}`)
+      }
+    } catch (err) {
+      alert(`Generation failed: ${err}`)
+    } finally {
+      setGenerating(null)
+    }
+  }
+
+  async function handleCustomGenerate() {
+    if (!customTopic.trim()) { alert('Please enter a topic.'); return }
+    setGenerating(customWebsite)
+    setShowCustomForm(false)
+    try {
+      const res = await fetch('/api/content/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          website: customWebsite,
+          customTopic: customTopic.trim(),
+          customKeyword: customKeyword.trim() || undefined,
+          customNotes: customNotes.trim() || undefined,
+        }),
+      })
+      if (res.ok) {
+        setCustomTopic('')
+        setCustomKeyword('')
+        setCustomNotes('')
+        await Promise.all([fetchPosts(), fetchTopics(), fetchApprovedCount()])
       } else {
         const err = await res.json()
         alert(`Generation failed: ${err.error}`)
@@ -180,7 +231,7 @@ export default function ContentPage() {
         setSelectedPostId(null)
         setSelectedPost(null)
         setReviewNotes('')
-        await Promise.all([fetchPosts(), fetchTopics()])
+        await Promise.all([fetchPosts(), fetchTopics(), fetchApprovedCount()])
       } else {
         const err = await res.json()
         alert(`Action failed: ${err.error}`)
@@ -189,6 +240,32 @@ export default function ContentPage() {
       alert(`Action failed: ${err}`)
     } finally {
       setActionLoading(false)
+    }
+  }
+
+  async function handlePublish() {
+    if (approvedCount === 0) return
+
+    const confirmed = window.confirm(
+      `Publish ${approvedCount} approved post${approvedCount !== 1 ? 's' : ''}?\n\nThis will create GitHub PRs for each post and update their status to "published".`
+    )
+    if (!confirmed) return
+
+    setPublishing(true)
+    setPublishResult(null)
+    try {
+      const res = await fetch('/api/content/publish', { method: 'POST' })
+      const data = await res.json()
+      if (res.ok) {
+        setPublishResult(data)
+        await Promise.all([fetchPosts(), fetchTopics(), fetchApprovedCount()])
+      } else {
+        alert(`Publishing failed: ${data.error}`)
+      }
+    } catch (err) {
+      alert(`Publishing failed: ${err}`)
+    } finally {
+      setPublishing(false)
     }
   }
 
@@ -375,6 +452,7 @@ export default function ContentPage() {
                 </button>
                 {showGenerateMenu && (
                   <div className="absolute right-0 mt-2 w-48 bg-white dark:bg-gray-800 rounded-lg shadow-lg border border-gray-200 dark:border-gray-700 py-1 z-10">
+                    <div className="px-3 py-1.5 text-xs font-medium text-gray-400 dark:text-gray-500 uppercase">From Queue</div>
                     {(Object.keys(WEBSITE_LABELS) as Website[]).map(site => (
                       <button
                         key={site}
@@ -384,14 +462,189 @@ export default function ContentPage() {
                         {WEBSITE_LABELS[site]}
                       </button>
                     ))}
+                    <div className="border-t border-gray-200 dark:border-gray-700 my-1" />
+                    <button
+                      onClick={() => { setShowGenerateMenu(false); setShowCustomForm(true) }}
+                      className="w-full px-4 py-2 text-left text-sm text-blue-600 dark:text-blue-400 hover:bg-gray-100 dark:hover:bg-gray-700 font-medium"
+                    >
+                      Custom Topic...
+                    </button>
                   </div>
                 )}
               </div>
+              {/* Publish button */}
+              <button
+                onClick={handlePublish}
+                disabled={publishing || approvedCount === 0}
+                title={approvedCount === 0 ? 'No approved posts to publish' : `Publish ${approvedCount} approved post${approvedCount !== 1 ? 's' : ''}`}
+                className="px-4 py-2 bg-green-600 hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-medium rounded-lg transition-colors flex items-center gap-2"
+              >
+                {publishing ? (
+                  <>
+                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                    Publishing...
+                  </>
+                ) : (
+                  <>
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+                    </svg>
+                    Publish{approvedCount > 0 ? ` (${approvedCount})` : ''}
+                  </>
+                )}
+              </button>
               <ThemeToggle />
             </div>
           </div>
         </div>
       </header>
+
+      {/* Publish result banner */}
+      {publishResult && (
+        <div className="max-w-7xl mx-auto px-6 pt-6">
+          <div className={`rounded-xl border p-4 ${
+            publishResult.summary.failed === 0
+              ? 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800'
+              : publishResult.summary.succeeded > 0
+                ? 'bg-yellow-50 dark:bg-yellow-900/20 border-yellow-200 dark:border-yellow-800'
+                : 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800'
+          }`}>
+            <div className="flex items-start justify-between gap-4">
+              <div className="min-w-0 flex-1">
+                <h3 className={`font-semibold ${
+                  publishResult.summary.failed === 0
+                    ? 'text-green-800 dark:text-green-300'
+                    : publishResult.summary.succeeded > 0
+                      ? 'text-yellow-800 dark:text-yellow-300'
+                      : 'text-red-800 dark:text-red-300'
+                }`}>
+                  Published {publishResult.summary.succeeded} of {publishResult.summary.total} post{publishResult.summary.total !== 1 ? 's' : ''}
+                  {publishResult.summary.failed > 0 ? ` (${publishResult.summary.failed} failed)` : ''}
+                </h3>
+                {publishResult.published.length > 0 && (
+                  <ul className="mt-2 space-y-1">
+                    {publishResult.published.map(p => (
+                      <li key={p.postId} className="text-sm text-green-700 dark:text-green-400 flex items-center gap-2">
+                        <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                        </svg>
+                        <span className="truncate">{p.title}</span>
+                        <a
+                          href={p.prUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-blue-600 dark:text-blue-400 hover:underline shrink-0"
+                        >
+                          View PR
+                        </a>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                {publishResult.errors.length > 0 && (
+                  <ul className="mt-2 space-y-1">
+                    {publishResult.errors.map(e => (
+                      <li key={e.postId} className="text-sm text-red-700 dark:text-red-400 flex items-center gap-2">
+                        <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                        </svg>
+                        <span className="truncate">{e.title}: {e.error}</span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+              <button
+                onClick={() => setPublishResult(null)}
+                className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 shrink-0"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Custom Topic Modal */}
+      {showCustomForm && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={() => setShowCustomForm(false)}>
+          <div className="bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-800 p-6 w-full max-w-lg shadow-xl" onClick={e => e.stopPropagation()}>
+            <h2 className="text-lg font-bold text-gray-900 dark:text-gray-100 mb-4">Generate Custom Post</h2>
+
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Website *</label>
+                <div className="flex rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-100 dark:bg-gray-800 p-1">
+                  {(Object.keys(WEBSITE_LABELS) as Website[]).map(site => (
+                    <button
+                      key={site}
+                      onClick={() => setCustomWebsite(site)}
+                      className={`flex-1 px-3 py-1.5 text-sm font-medium rounded-md transition-all ${
+                        customWebsite === site
+                          ? 'bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 shadow-sm'
+                          : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200'
+                      }`}
+                    >
+                      {WEBSITE_LABELS[site]}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Topic *</label>
+                <input
+                  type="text"
+                  value={customTopic}
+                  onChange={e => setCustomTopic(e.target.value)}
+                  placeholder="e.g. How to Read Vitamin D Blood Test Results"
+                  className="w-full px-3 py-2 text-sm border border-gray-200 dark:border-gray-700 rounded-lg bg-gray-50 dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Target Keyword <span className="text-gray-400">(optional)</span></label>
+                <input
+                  type="text"
+                  value={customKeyword}
+                  onChange={e => setCustomKeyword(e.target.value)}
+                  placeholder="e.g. vitamin D blood test"
+                  className="w-full px-3 py-2 text-sm border border-gray-200 dark:border-gray-700 rounded-lg bg-gray-50 dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Instructions for AI <span className="text-gray-400">(optional)</span></label>
+                <textarea
+                  value={customNotes}
+                  onChange={e => setCustomNotes(e.target.value)}
+                  placeholder="e.g. Focus on beginner-friendly explanations. Compare normal vs deficient ranges. Mention recent 2025 studies on vitamin D and immunity."
+                  rows={3}
+                  className="w-full px-3 py-2 text-sm border border-gray-200 dark:border-gray-700 rounded-lg bg-gray-50 dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 resize-y"
+                />
+              </div>
+            </div>
+
+            <div className="flex gap-3 mt-6">
+              <button
+                onClick={handleCustomGenerate}
+                disabled={!customTopic.trim()}
+                className="flex-1 px-4 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-sm font-medium rounded-lg transition-colors"
+              >
+                Generate
+              </button>
+              <button
+                onClick={() => setShowCustomForm(false)}
+                className="px-4 py-2.5 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 text-sm font-medium rounded-lg hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <main className="max-w-7xl mx-auto px-6 py-8">
         {/* Stats bar */}

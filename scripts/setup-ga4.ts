@@ -13,9 +13,9 @@ import { getSupabaseClient } from '../src/db/client.js';
 
 // Mapping of env var names to app slugs
 const GA4_ENV_MAPPINGS: Record<string, string> = {
-  APP_HEALTHOPENPAGE_GA4_PROPERTY_ID: 'health_open_page',
+  APP_HEALTHOPENPAGE_GA4_PROPERTY_ID: 'healthopenpage_website',
   APP_MEDITNATION_WEB_GA4_PROPERTY_ID: 'meditnation_website',
-  APP_RIFFROUTINE_GA4_PROPERTY_ID: 'riffroutine',
+  APP_RIFFROUTINE_GA4_PROPERTY_ID: 'riffroutine_website',
 };
 
 async function main() {
