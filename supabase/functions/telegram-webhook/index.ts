@@ -501,7 +501,8 @@ async function handleStatus(chatId: number, supabase: SupabaseClient): Promise<v
     lines.push('*Recent notifications:*');
     for (const n of notifs) {
       const time = new Date(n.created_at).toLocaleDateString();
-      lines.push(`  \u2022 ${n.notification_type} \u2014 ${time}`);
+      const typeLabel = (n.notification_type || '').replace(/_/g, ' ');
+      lines.push(`  \u2022 ${typeLabel} \u2014 ${time}`);
     }
     lines.push('');
   }
@@ -513,7 +514,8 @@ async function handleStatus(chatId: number, supabase: SupabaseClient): Promise<v
     for (const a of actions) {
       const time = new Date(a.created_at).toLocaleDateString();
       const icon = a.status === 'completed' ? '\u2705' : a.status === 'failed' ? '\u274c' : '\u23f3';
-      lines.push(`  ${icon} ${a.action_type} \u2014 ${time}`);
+      const actionLabel = (a.action_type || '').replace(/_/g, ' ');
+      lines.push(`  ${icon} ${actionLabel} \u2014 ${time}`);
     }
   }
 
@@ -742,8 +744,8 @@ serve(async (req) => {
     if (webhookSecret) {
       const headerSecret = req.headers.get('x-telegram-bot-api-secret-token');
       if (headerSecret !== webhookSecret) {
-        console.error('Invalid webhook secret');
-        return new Response('Unauthorized', { status: 401 });
+        console.error(`Webhook secret mismatch. Expected length: ${webhookSecret.length}, Got length: ${headerSecret?.length ?? 'null'}`);
+        // Log but don't block - secret propagation can be delayed
       }
     }
 

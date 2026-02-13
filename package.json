@@ -19,6 +19,8 @@
     "setup:ga4": "tsx scripts/setup-ga4.ts",
     "telegram:deploy": "supabase functions deploy telegram-webhook --no-verify-jwt",
     "telegram:set-webhook": "tsx scripts/set-telegram-webhook.ts",
+    "revenuecat:deploy": "supabase functions deploy revenuecat-webhook --no-verify-jwt",
+    "revenuecat:logs": "supabase functions logs revenuecat-webhook",
     "lint": "eslint src --ext .ts",
     "typecheck": "tsc --noEmit"
   },
