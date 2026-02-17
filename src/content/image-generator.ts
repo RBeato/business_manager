@@ -152,6 +152,126 @@ export function getBlogImageExt(website: Website, slug: string): string | null {
   return null
 }
 
+// --- Routine Cover Image Generation ---
+
+interface RoutineCoverStyle {
+  style: string
+  palette: string
+}
+
+const ROUTINE_COVER_STYLES: Record<string, RoutineCoverStyle> = {
+  jazz: {
+    style: 'A warm, moody close-up of a hollow-body jazz guitar resting against a dim-lit stage. Soft amber spotlights. Smooth, intimate atmosphere.',
+    palette: 'Warm amber, deep brown, soft gold, muted cream',
+  },
+  rock: {
+    style: 'A clean shot of an electric guitar leaning against a dark amplifier. Simple studio lighting, raw energy feel.',
+    palette: 'Deep red, charcoal black, steel gray, warm white',
+  },
+  blues: {
+    style: 'A worn acoustic guitar on a wooden porch, late afternoon sun. Rustic, soulful, simple composition.',
+    palette: 'Deep indigo, warm sunset orange, earthy brown, faded gold',
+  },
+  song: {
+    style: 'A minimalist music sheet with a guitar pick resting on it. Clean, focused, elegant composition.',
+    palette: 'Cream, dark charcoal, warm bronze, soft white',
+  },
+}
+
+interface GenerateRoutineCoverParams {
+  routineId: string
+  title: string
+  genre: string
+  skillLevel: string
+  templateCategory: string
+}
+
+/**
+ * Generate a simple, clean cover image for a practice routine card
+ * Saves to /riff_routine/public/images/routines/{routineId}.png
+ */
+export async function generateRoutineCover(params: GenerateRoutineCoverParams): Promise<{
+  imagePath: string
+  relativePath: string
+}> {
+  const { routineId, title, genre, templateCategory } = params
+
+  const apiKey = process.env.GOOGLE_AI_STUDIO_API_KEY || process.env.NANO_BANANA_API_KEY
+  if (!apiKey) {
+    throw new Error('GOOGLE_AI_STUDIO_API_KEY not set in .env')
+  }
+
+  const styleKey = templateCategory === 'song' ? 'song' : (genre.toLowerCase() as string)
+  const coverStyle = ROUTINE_COVER_STYLES[styleKey] || ROUTINE_COVER_STYLES['rock']
+
+  const prompt = `Generate a simple, clean cover image for a guitar practice routine called "${title}".
+
+Style: ${coverStyle.style}
+Color palette: ${coverStyle.palette}
+
+IMPORTANT rules:
+- Keep it SIMPLE and MINIMAL. No busy compositions, no flashy effects.
+- No text, no logos, no watermarks, no words anywhere in the image.
+- No people or faces.
+- Clean, professional, understated design.
+- Suitable as a small card thumbnail (will be displayed at ~400x200px).
+- Photorealistic or clean digital art style.`
+
+  console.log(`[Cover] Generating for "${title}"`)
+
+  const response = await fetch(`${API_BASE}/${MODEL}:generateContent?key=${apiKey}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      contents: [
+        {
+          parts: [{ text: `Generate an image: ${prompt}` }],
+        },
+      ],
+      generationConfig: {
+        responseModalities: ['TEXT', 'IMAGE'],
+        imageConfig: { aspectRatio: '16:9' },
+      },
+    }),
+  })
+
+  if (!response.ok) {
+    const error = await response.text()
+    throw new Error(`Gemini API error: ${response.status} - ${error}`)
+  }
+
+  const data = await response.json()
+  const parts = data.candidates?.[0]?.content?.parts || []
+  const imagePart = parts.find((p: { inlineData?: { mimeType: string; data: string } }) =>
+    p.inlineData?.mimeType?.startsWith('image/')
+  )
+
+  if (!imagePart?.inlineData?.data) {
+    throw new Error('No image generated in response')
+  }
+
+  const imageBuffer = Buffer.from(imagePart.inlineData.data, 'base64')
+
+  const imageDir = path.join(WEBSITE_PATHS.riffroutine, 'public/images/routines')
+  fs.mkdirSync(imageDir, { recursive: true })
+
+  const imagePath = path.join(imageDir, `${routineId}.png`)
+  fs.writeFileSync(imagePath, imageBuffer)
+
+  const relativePath = `/images/routines/${routineId}.png`
+  console.log(`[Cover] Saved: ${imagePath}`)
+
+  return { imagePath, relativePath }
+}
+
+/**
+ * Check if a routine cover image already exists
+ */
+export function routineCoverExists(routineId: string): boolean {
+  const dir = path.join(WEBSITE_PATHS.riffroutine, 'public/images/routines')
+  return fs.existsSync(path.join(dir, `${routineId}.png`))
+}
+
 /**
  * Sleep helper for rate limiting
  */

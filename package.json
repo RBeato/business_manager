@@ -20,6 +20,7 @@
     "content:seed-biomarkers": "tsx scripts/seed-biomarkers.ts",
     "content:generate-images": "tsx scripts/generate-blog-images.ts",
     "content:backfill-images": "tsx scripts/backfill-blog-images.ts",
+    "content:routine-covers": "tsx scripts/generate-routine-covers.ts",
     "setup:ga4": "tsx scripts/setup-ga4.ts",
     "telegram:deploy": "supabase functions deploy telegram-webhook --no-verify-jwt",
     "telegram:set-webhook": "tsx scripts/set-telegram-webhook.ts",
