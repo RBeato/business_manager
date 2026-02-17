@@ -66,15 +66,21 @@ For each new project found:
 - `src/monitoring/credits.ts` - API credit checking
 - `dashboard/src/app/api/credits/route.ts` - Dashboard credit API
 
-### Content Engine (NEW)
-- `src/content/generator.ts` - AI blog post generator (DeepSeek)
-- `src/content/publisher.ts` - GitHub PR publisher
-- `scripts/generate-content.ts` - CLI: Generate blog posts
-- `scripts/publish-scheduled.ts` - CLI: Publish approved posts
-- `scripts/seed-topics.ts` - CLI: Populate topic queues
+### Content Engine
+- `src/content/generator.ts` - AI blog post generator (DeepSeek via OpenAI SDK)
+- `src/content/publisher.ts` - GitHub PR publisher (needs token fix)
+- `scripts/publish-local.ts` - Local publisher (creates page.tsx files directly in website repos)
+- `scripts/generate-content.ts` - CLI: Generate general blog posts
+- `scripts/generate-biomarker.ts` - CLI: Generate biomarker pages (programmatic SEO)
+- `scripts/seed-biomarkers.ts` - CLI: Seed 162 biomarker topics
+- `scripts/publish-scheduled.ts` - CLI: Publish approved posts via GitHub PRs
+- `scripts/seed-topics.ts` - CLI: Populate general topic queues
 - `supabase/migrations/003_content_engine.sql` - Database schema
 - `docs/CONTENT_ENGINE.md` - Technical reference
 - `docs/CONTENT_ENGINE_WORKFLOW.md` - Usage guide
+
+### Project Status & TODOs
+- `docs/TODO.md` - Complete project status, TODO list, known issues, and roadmap
 
 ---
 
@@ -103,6 +109,8 @@ Topic Queue (30+ SEO ideas)
   ↓
 AI Generates Blog Post (DeepSeek, $0.001/post)
   ↓
+AI Generates Featured Image (Gemini, $0.03/image)
+  ↓
 User Reviews & Approves (10 min)
   ↓
 GitHub PR Created Automatically
@@ -111,6 +119,24 @@ Published to Website (Vercel auto-deploy)
 ```
 
 **Time Savings**: 3.5 hours → 10 minutes per post
+
+### Blog Image Rules (MANDATORY)
+
+**Every blog post MUST have a featured image.** Posts without images should not be published.
+
+**Image sources by content type:**
+- **Health/Medical content (HOP)**: AI-generated via Gemini API. Professional medical illustrations, lab equipment, biomarker visualizations. Blue/teal palette.
+- **Meditation content (MeditNation)**: AI-generated via Gemini API. Serene scenes, nature, meditation poses. Golden/warm palette.
+- **Guitar general content (RiffRoutine)**: AI-generated via Gemini API. Guitars, music studios, practice scenes. Violet/purple palette.
+- **Guitarist-specific content (RiffRoutine)**: Use **copyright-free photos** of the actual guitarist from Wikimedia Commons (CC-BY, CC-BY-SA, CC0). Always add attribution to `public/images/blog/CREDITS.md`. Only fall back to AI-generated if no CC photo exists.
+
+**Image specs:**
+- Aspect ratio: 16:9 (hero image)
+- Storage: `/public/images/blog/{slug}.png` (AI) or `.jpg` (photos)
+- Displayed as hero image between header and article content
+- Included in OpenGraph and Twitter metadata for social sharing
+- Generated automatically during `npm run content:generate`
+- Backfill existing posts: `npm run content:generate-images` + `npm run content:backfill-images`
 
 ---
 
@@ -305,8 +331,17 @@ npm run content:publish
 ### `npm run content:generate <website>`
 **When to use**: Generate new blog posts
 **Options**: `healthopenpage`, `meditnation`, `riffroutine`
-**What it does**: AI generates SEO-optimized blog post
-**Cost**: ~$0.001 per post (DeepSeek API)
+**What it does**: AI generates SEO-optimized blog post + featured image
+**Cost**: ~$0.031 per post (DeepSeek text + Gemini image)
+
+### `npm run content:generate-images [website] [--dry]`
+**When to use**: Generate images for existing posts that don't have them
+**What it does**: Scans website repos, generates Gemini AI images for posts missing images
+**Cost**: ~$0.03 per image
+
+### `npm run content:backfill-images [website] [--dry]`
+**When to use**: After generating images, patches existing blog files to display them
+**What it does**: Adds hero image, OpenGraph/Twitter image metadata to existing blog pages
 
 ### `npm run content:publish`
 **When to use**: After approving posts in Supabase
@@ -620,10 +655,13 @@ Answer with semantic variations
 business_manager/
 ├── src/
 │   └── content/
-│       ├── generator.ts         # AI blog post generator
+│       ├── generator.ts         # AI blog post + image generator
+│       ├── image-generator.ts   # Gemini API image generation service
 │       └── publisher.ts         # GitHub PR publisher
 ├── scripts/
 │   ├── generate-content.ts      # CLI: Generate posts
+│   ├── generate-blog-images.ts  # CLI: Generate images for existing posts
+│   ├── backfill-blog-images.ts  # CLI: Patch blog files with hero images
 │   ├── publish-scheduled.ts     # CLI: Publish posts
 │   └── seed-topics.ts           # CLI: Seed topics
 ├── supabase/
@@ -633,7 +671,7 @@ business_manager/
 │   ├── CONTENT_ENGINE.md        # Technical reference
 │   └── CONTENT_ENGINE_WORKFLOW.md  # Usage guide
 ├── dashboard/                   # Future: Approval UI
-├── .env                         # API keys
+├── .env                         # API keys (incl. GOOGLE_AI_STUDIO_API_KEY for Gemini)
 └── package.json                 # CLI commands
 ```
 
@@ -685,7 +723,7 @@ GOOGLE_SEARCH_CONSOLE_KEY="..."
 
 ---
 
-**Last Updated**: February 9, 2026
+**Last Updated**: February 16, 2026
 **Status**: Phase 1 Complete ✅
 **Next Step**: Run setup instructions and generate first test post
 

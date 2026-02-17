@@ -3,7 +3,7 @@
  * Uses DeepSeek AI to generate SEO-optimized blog posts
  */
 
-import Anthropic from '@anthropic-ai/sdk'
+import OpenAI from 'openai'
 import { createClient } from '@supabase/supabase-js'
 
 const supabase = createClient(
@@ -59,6 +59,7 @@ interface BlogPostResult {
   seoScore: number
   wordCount: number
   readingTimeMinutes: number
+  imageUrl?: string
 }
 
 /**
@@ -76,8 +77,7 @@ export async function generateBlogPost(params: GenerateBlogPostParams): Promise<
 
   const config = WEBSITE_CONFIG[website]
 
-  // Use DeepSeek via Anthropic-compatible API
-  const client = new Anthropic({
+  const client = new OpenAI({
     apiKey: process.env.DEEPSEEK_API_KEY,
     baseURL: 'https://api.deepseek.com'
   })
@@ -95,7 +95,7 @@ export async function generateBlogPost(params: GenerateBlogPostParams): Promise<
   console.log(`🤖 Generating blog post for ${website}: "${topic}"`)
   console.log(`   Target keyword: "${targetKeyword}" (${searchVolume} searches/month)`)
 
-  const message = await client.messages.create({
+  const message = await client.chat.completions.create({
     model: 'deepseek-chat',
     max_tokens: 8000,
     messages: [{
@@ -104,7 +104,7 @@ export async function generateBlogPost(params: GenerateBlogPostParams): Promise<
     }]
   })
 
-  const responseText = message.content[0].type === 'text' ? message.content[0].text : ''
+  const responseText = message.choices[0]?.message?.content || ''
 
   // Parse the generated content
   const parsed = parseGeneratedContent(responseText)
@@ -126,12 +126,29 @@ export async function generateBlogPost(params: GenerateBlogPostParams): Promise<
 
   console.log(`✅ Generated: "${parsed.title}" (${actualWordCount} words, SEO: ${seoScore}/100)`)
 
+  // Generate featured image
+  let imageUrl: string | undefined
+  try {
+    const { generateBlogImage } = await import('./image-generator')
+    const { relativePath } = await generateBlogImage({
+      title: parsed.title,
+      website,
+      slug,
+      targetKeyword,
+    })
+    imageUrl = relativePath
+    console.log(`   Featured image: ${relativePath}`)
+  } catch (err: any) {
+    console.warn(`   Warning: Image generation failed: ${err.message}`)
+  }
+
   return {
     ...parsed,
     slug,
     seoScore,
     wordCount: actualWordCount,
-    readingTimeMinutes: readingTime
+    readingTimeMinutes: readingTime,
+    imageUrl,
   }
 }
 
@@ -337,6 +354,7 @@ export async function saveBlogPost(
       meta_description: blogPost.metaDescription,
       keywords: blogPost.keywords,
       target_keyword: blogPost.keywords[0] || '',
+      image_url: blogPost.imageUrl || null,
       seo_score: blogPost.seoScore,
       status: 'pending_review',
       word_count: blogPost.wordCount,
@@ -363,6 +381,309 @@ export async function saveBlogPost(
 
   console.log(`💾 Saved to database: ${data.id}`)
   return data
+}
+
+/**
+ * Build specialized prompt for biomarker/panel/condition pages (programmatic SEO)
+ */
+function buildBiomarkerPrompt(params: {
+  config: typeof WEBSITE_CONFIG[Website]
+  topic: string
+  targetKeyword: string
+  searchVolume: number
+  category: string
+}): string {
+  const { config, topic, targetKeyword, searchVolume, category } = params
+
+  const categoryPrompts: Record<string, string> = {
+    biomarker: `You are a medical content writer for ${config.name}. Write a comprehensive biomarker guide.
+
+**Biomarker**: ${topic}
+**Target Keyword**: "${targetKeyword}" (${searchVolume} searches/month)
+**Website**: ${config.url}
+
+**Required Sections** (use these exact H2/H3 headings):
+
+## What Is ${topic.split(':')[0]}?
+- 2-3 paragraphs explaining what this biomarker measures
+- Why doctors order this test
+- Which organs/systems it relates to
+
+## Normal ${topic.split(':')[0]} Ranges
+### By Age and Gender
+- Create a markdown table with columns: Group | Low | Normal | Optimal | High
+- Include rows for: Adult Men, Adult Women, Children, Pregnant Women (if applicable), Elderly
+- Use standard medical units (include both conventional and SI units)
+
+### What "Normal" vs "Optimal" Means
+- Explain the difference between reference range and optimal range
+- Why optimal matters for preventive health
+
+## What Do Abnormal Results Mean?
+### High ${topic.split(':')[0]} Levels
+- List 5-7 causes with brief explanations
+- Associated symptoms
+- When to see a doctor
+
+### Low ${topic.split(':')[0]} Levels
+- List 5-7 causes with brief explanations
+- Associated symptoms
+- When to see a doctor
+
+## How to Improve Your ${topic.split(':')[0]} Levels
+### Diet and Nutrition
+- Specific foods that help (with amounts)
+- Foods to avoid
+- Create a table of top 10 foods
+
+### Lifestyle Changes
+- Exercise recommendations
+- Sleep and stress management
+- Supplements (with dosages and evidence level)
+
+## Related Tests to Consider
+- List 4-6 related biomarkers with internal links formatted as [Test Name](/blog/biomarkers/slug)
+- Explain why testing these together gives a fuller picture
+
+## When to Get Tested
+- Recommended testing frequency
+- Risk factors that warrant more frequent testing
+- How to prepare for the test (fasting, timing, etc.)
+
+## Frequently Asked Questions
+- 7-10 specific questions people ask about this biomarker
+- Include questions with specific values (e.g., "Is a level of X normal?")
+- Direct, concise answers (2-3 sentences each)
+
+**IMPORTANT Medical Content Rules**:
+- Cite specific studies or medical organizations (e.g., "According to the American Heart Association...")
+- Include the disclaimer: "This information is for educational purposes. Always consult your healthcare provider."
+- Use evidence-based ranges from major medical institutions
+- Be specific with numbers, not vague ("150-300 ng/mL" not "within normal range")`,
+
+    panel: `You are a medical content writer for ${config.name}. Write a comprehensive lab panel guide.
+
+**Lab Panel**: ${topic}
+**Target Keyword**: "${targetKeyword}" (${searchVolume} searches/month)
+**Website**: ${config.url}
+
+**Required Sections**:
+
+## What Is ${topic.split(':')[0]}?
+- What this panel tests and why it's ordered
+- Which conditions it screens for
+
+## Tests Included in This Panel
+- Create a markdown table: Test Name | What It Measures | Normal Range | Unit
+- Cover ALL individual tests in this panel
+
+## How to Read Your Results
+### Step-by-Step Interpretation
+- Walk through each biomarker in the panel
+- Explain what combinations mean (e.g., "high X with low Y suggests...")
+
+### Common Patterns
+- Create a table of patterns: Pattern | Possible Meaning | Next Steps
+- Include 5-8 common result combinations
+
+## What Abnormal Results Mean
+- Organized by condition (e.g., "Signs of kidney disease", "Signs of liver issues")
+
+## How to Prepare for This Test
+- Fasting requirements, timing, medications to discuss
+
+## Individual Biomarker Deep Dives
+- Brief overview of each test with link: [Learn more about Ferritin](/blog/biomarkers/ferritin)
+
+## Frequently Asked Questions
+- 7-10 questions including "How often should I get this panel?"
+- Include cost questions, insurance coverage
+
+**Medical Content Rules**: Same as biomarker (cite sources, include disclaimer, be specific with numbers).`,
+
+    condition: `You are a medical content writer for ${config.name}. Write a guide on lab tests for a specific condition.
+
+**Condition**: ${topic}
+**Target Keyword**: "${targetKeyword}" (${searchVolume} searches/month)
+**Website**: ${config.url}
+
+**Required Sections**:
+
+## Understanding ${topic.split(':')[0]}
+- Brief overview of the condition
+- Why lab testing is important for diagnosis/monitoring
+
+## Essential Lab Tests for ${topic.split(':')[0]}
+- Create a table: Test | What It Shows | Target Range | Frequency
+- List ALL relevant tests, prioritized by importance
+
+## How to Read Your Results
+- Condition-specific interpretation (not generic)
+- What to discuss with your doctor
+- Red flags that need immediate attention
+
+## Monitoring Your Progress
+- Which tests to track over time
+- How often to retest
+- What improving/worsening trends look like
+
+## Lifestyle and Treatment Impact on Lab Results
+- How medications affect results
+- Diet and exercise effects
+- Timeline for seeing changes
+
+## Related Conditions to Screen For
+- Comorbidities and related tests
+- Internal links to related biomarker pages
+
+## Frequently Asked Questions
+- 7-10 condition-specific questions
+- Include questions about medication interactions with tests
+
+**Medical Content Rules**: Same as biomarker.`,
+
+    results: `You are a medical content writer for ${config.name}. Write a guide interpreting a specific lab result value.
+
+**Topic**: ${topic}
+**Target Keyword**: "${targetKeyword}" (${searchVolume} searches/month)
+**Website**: ${config.url}
+
+**Required Sections**:
+
+## What Does This Result Mean?
+- Direct, clear interpretation of the specific value/range
+- Is it normal, borderline, or concerning?
+- Context: age, gender, and individual factors
+
+## Possible Causes
+- List 5-8 reasons for this specific result
+- Most common causes first
+
+## What Should You Do Next?
+- Immediate steps (if concerning)
+- Follow-up tests to consider
+- When to see a doctor vs. when to monitor
+
+## How to Improve This Level
+- Actionable dietary changes
+- Lifestyle modifications
+- Supplement considerations
+
+## Related Biomarkers to Check
+- What else to test alongside this
+- Links to individual biomarker pages
+
+## Frequently Asked Questions
+- 5-7 ultra-specific questions
+- e.g., "Should I be worried about this level?"
+- "How quickly can I change this number?"
+
+**Medical Content Rules**: Same as biomarker.`
+  }
+
+  const basePrompt = categoryPrompts[category] || categoryPrompts.biomarker
+
+  return `${basePrompt}
+
+**SEO Requirements**:
+- Title (H1): Include "${targetKeyword}", max 60 chars, compelling
+- Meta description: 150-160 chars with keyword and CTA
+- Keyword density: 1-2% natural
+- Use LSI keywords throughout
+- Internal links: Use format [Text](/blog/biomarkers/slug) for related biomarkers
+- End every page with CTA: "${config.cta}" linking to ${config.url}/labs/analyze
+
+**Output Format**:
+Return ONLY valid JSON (no markdown code blocks):
+{
+  "title": "Page title here",
+  "metaDescription": "Meta description here",
+  "keywords": ["keyword1", "keyword2", "keyword3", "keyword4", "keyword5"],
+  "content": "Full content in Markdown format"
+}
+
+**Target**: 2000-3000 words. Be specific, cite sources, use tables and lists.
+
+Generate the content now:`
+}
+
+/**
+ * Generate a biomarker/health page (programmatic SEO)
+ */
+export async function generateBiomarkerPage(params: GenerateBlogPostParams & { category?: string }): Promise<BlogPostResult> {
+  const {
+    website,
+    topic,
+    targetKeyword,
+    searchVolume = 0,
+    category = 'biomarker',
+    wordCount = 2500
+  } = params
+
+  const config = WEBSITE_CONFIG[website]
+
+  const client = new OpenAI({
+    apiKey: process.env.DEEPSEEK_API_KEY,
+    baseURL: 'https://api.deepseek.com'
+  })
+
+  const prompt = buildBiomarkerPrompt({
+    config,
+    topic,
+    targetKeyword,
+    searchVolume,
+    category
+  })
+
+  console.log(`🧬 Generating ${category} page: "${topic}"`)
+  console.log(`   Target keyword: "${targetKeyword}" (${searchVolume} searches/month)`)
+
+  const message = await client.chat.completions.create({
+    model: 'deepseek-chat',
+    max_tokens: 8000,
+    messages: [{ role: 'user', content: prompt }]
+  })
+
+  const responseText = message.choices[0]?.message?.content || ''
+  const parsed = parseGeneratedContent(responseText)
+
+  const seoScore = calculateSEOScore({
+    content: parsed.content,
+    targetKeyword,
+    title: parsed.title,
+    metaDescription: parsed.metaDescription
+  })
+
+  const slug = generateSlug(parsed.title)
+  const actualWordCount = countWords(parsed.content)
+  const readingTime = Math.ceil(actualWordCount / 200)
+
+  console.log(`✅ Generated: "${parsed.title}" (${actualWordCount} words, SEO: ${seoScore}/100)`)
+
+  // Generate featured image
+  let imageUrl: string | undefined
+  try {
+    const { generateBlogImage } = await import('./image-generator')
+    const { relativePath } = await generateBlogImage({
+      title: parsed.title,
+      website,
+      slug,
+      targetKeyword,
+    })
+    imageUrl = relativePath
+    console.log(`   Featured image: ${relativePath}`)
+  } catch (err: any) {
+    console.warn(`   Warning: Image generation failed: ${err.message}`)
+  }
+
+  return {
+    ...parsed,
+    slug,
+    seoScore,
+    wordCount: actualWordCount,
+    readingTimeMinutes: readingTime,
+    imageUrl,
+  }
 }
 
 /**
