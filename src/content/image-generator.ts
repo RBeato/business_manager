@@ -161,20 +161,76 @@ interface RoutineCoverStyle {
 
 const ROUTINE_COVER_STYLES: Record<string, RoutineCoverStyle> = {
   jazz: {
-    style: 'A warm, moody close-up of a hollow-body jazz guitar resting against a dim-lit stage. Soft amber spotlights. Smooth, intimate atmosphere.',
+    style: 'A smoky jazz club corner — a single spotlight illuminating an empty microphone stand and a worn barstool, with blurred cocktail glasses and vinyl records in the background. Intimate, cinematic.',
     palette: 'Warm amber, deep brown, soft gold, muted cream',
   },
   rock: {
-    style: 'A clean shot of an electric guitar leaning against a dark amplifier. Simple studio lighting, raw energy feel.',
-    palette: 'Deep red, charcoal black, steel gray, warm white',
+    style: 'A pair of drumsticks crossed on a snare drum, with stage lights casting dramatic red and orange beams through haze in the background. Raw, energetic, concert atmosphere.',
+    palette: 'Deep red, charcoal black, steel gray, fiery orange',
   },
   blues: {
-    style: 'A worn acoustic guitar on a wooden porch, late afternoon sun. Rustic, soulful, simple composition.',
-    palette: 'Deep indigo, warm sunset orange, earthy brown, faded gold',
+    style: 'A neon "BLUES" sign glowing in a rain-soaked window at night, reflected in puddles on the sidewalk. Moody, soulful, urban.',
+    palette: 'Deep indigo, electric blue neon, warm amber reflections, dark asphalt gray',
   },
   song: {
-    style: 'A minimalist music sheet with a guitar pick resting on it. Clean, focused, elegant composition.',
-    palette: 'Cream, dark charcoal, warm bronze, soft white',
+    style: 'An overhead shot of handwritten sheet music on aged paper, with a cup of black coffee and a pencil beside it. Morning light streaming in. Studious, focused.',
+    palette: 'Cream, sepia, dark charcoal, warm bronze',
+  },
+  classical: {
+    style: 'A grand piano lid reflecting candlelight in a dimly lit concert hall. Elegant, timeless, refined atmosphere.',
+    palette: 'Deep black, warm ivory, rich mahogany, soft candlelight gold',
+  },
+}
+
+// Per-routine overrides for maximum visual variety
+const ROUTINE_COVER_OVERRIDES: Record<string, RoutineCoverStyle> = {
+  'template-jazz-beginner': {
+    style: 'A close-up of piano keys with soft golden light falling across them, a few jazz chord charts blurred in the background. Warm, inviting, beginner-friendly.',
+    palette: 'Ivory, warm gold, soft black, honey amber',
+  },
+  'template-rock-beginner': {
+    style: 'A single guitar pick resting on a vinyl record, shot from above. Simple, bold, iconic. Clean studio lighting.',
+    palette: 'Jet black, cherry red, silver, white',
+  },
+  'template-blues-beginner': {
+    style: 'A harmonica and a bottleneck slide resting on a worn wooden bar counter, warm tungsten light. Simple, rustic, inviting.',
+    palette: 'Warm walnut brown, copper, faded gold, soft cream',
+  },
+  'template-jazz-intermediate': {
+    style: 'A saxophone lying on a velvet-lined case, shot from a low angle with bokeh city lights visible through a window behind it. Sophisticated, urban jazz.',
+    palette: 'Deep midnight blue, brass gold, soft violet, warm white',
+  },
+  'template-rock-intermediate': {
+    style: 'A row of guitar effect pedals on a dark pedalboard, colorful LED indicators glowing. Overhead shot, moody stage lighting.',
+    palette: 'Dark charcoal, neon green, electric blue, amber LED glow',
+  },
+  'template-blues-intermediate': {
+    style: 'A crossroads at dusk — two dirt roads meeting, with a single old wooden signpost and a dramatic sky. Mythical, evocative, the legend of the blues.',
+    palette: 'Burnt orange sunset, deep purple sky, dusty brown, silhouette black',
+  },
+  'template-song-giant-steps': {
+    style: 'A vintage turntable playing a vinyl record, the needle in the groove, warm light casting long shadows. Close-up, nostalgic, classic jazz era.',
+    palette: 'Rich mahogany, warm amber, vintage cream, soft black',
+  },
+  'demo-jazz-guitar-fundamentals': {
+    style: 'A close-up of a jazz real book open to a lead sheet, reading glasses resting on the page, warm desk lamp light. Studious, approachable.',
+    palette: 'Warm cream, soft amber, dark navy, muted gold',
+  },
+  'demo-blues-improvisation-mastery': {
+    style: 'A moody close-up of a microphone in a smoky blues bar, with warm stage lights creating lens flare. Empty stage, anticipation.',
+    palette: 'Smoky gray, electric blue, warm amber spotlight, deep black',
+  },
+  'demo-advanced-jazz-standards': {
+    style: 'An upright bass standing in the corner of a jazz club, warm wood tones, a single spotlight, blurred audience chairs in the background.',
+    palette: 'Rich walnut, deep amber, soft cream, warm spotlight yellow',
+  },
+  'demo-chopin-etudes-preparation': {
+    style: 'A close-up of ivory piano keys with a single red rose petal resting on them. Dramatic side lighting, classical concert atmosphere.',
+    palette: 'Ivory white, crimson red, deep black, warm gold',
+  },
+  'demo-hanon-exercises-reimagined': {
+    style: 'A metronome ticking on top of a piano, shot with shallow depth of field. Soft natural light from a nearby window. Calm, methodical, practice room feel.',
+    palette: 'Soft wood tones, warm white, gentle shadow, brass accents',
   },
 }
 
@@ -201,8 +257,9 @@ export async function generateRoutineCover(params: GenerateRoutineCoverParams): 
     throw new Error('GOOGLE_AI_STUDIO_API_KEY not set in .env')
   }
 
+  // Use per-routine override if available, otherwise fall back to genre style
   const styleKey = templateCategory === 'song' ? 'song' : (genre.toLowerCase() as string)
-  const coverStyle = ROUTINE_COVER_STYLES[styleKey] || ROUTINE_COVER_STYLES['rock']
+  const coverStyle = ROUTINE_COVER_OVERRIDES[routineId] || ROUTINE_COVER_STYLES[styleKey] || ROUTINE_COVER_STYLES['rock']
 
   const prompt = `Generate a simple, clean cover image for a guitar practice routine called "${title}".
 
