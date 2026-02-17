@@ -44,10 +44,11 @@
 │   - AI Insights (DeepSeek)                                              │
 │   - HTML Email Template                                                 │
 │   - Resend Email Delivery                                               │
+│   - Telegram Bot (webhook)                                              │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
-### Files Created (42 total)
+### Files Created (50+ total)
 
 | Category | Files | Purpose |
 |----------|-------|---------|
@@ -57,11 +58,13 @@
 | Ingestion | 12 files in `src/ingestion/` | Data source integrations |
 | Metrics | `calculator.ts`, `aggregator.ts` | Business calculations |
 | Reports | `generator.ts`, `ai-insights.ts`, `daily-email.ts` | Report generation |
-| Delivery | `src/delivery/email.ts` | Email sending |
+| Delivery | `src/delivery/email.ts`, `telegram.ts` | Email + Telegram sending |
 | Monitoring | `src/monitoring/credits.ts` | Credit/quota alerts |
-| Scripts | 4 files in `scripts/` | CLI utilities |
-| Edge Functions | 2 files in `supabase/functions/` | Serverless deployment |
-| Docs | `api-keys-setup.md` | Setup documentation |
+| Content Engine | `src/content/generator.ts`, `publisher.ts` | AI blog generation + publishing |
+| Scripts | 10 files in `scripts/` | CLI utilities |
+| Edge Functions | 2 files in `supabase/functions/` | Telegram + RevenueCat webhooks |
+| Dashboard | `dashboard/` | Next.js web UI (port 3002) |
+| Docs | `docs/` | Setup + workflow documentation |
 
 ---
 
@@ -72,34 +75,40 @@
 | Component | Status | Notes |
 |-----------|--------|-------|
 | Supabase Database | ✅ Connected | `ptndtjbyguhixwgbnfsm` |
-| Database Schema | ✅ Deployed | 12 tables, indexes, views |
-| Email IMAP | ✅ Working | 3 records ingested |
-| Cartesia | ✅ Working | 1 record ingested |
-| DeepSeek | ✅ Configured | $10.39 balance |
-| Resend | ✅ Configured | API key valid |
+| Database Schema | ✅ Deployed | 12+ tables, indexes, views, 9 migrations |
+| RevenueCat v2 API | ✅ Working | 6 apps tracked, Charts API for daily metrics |
+| RevenueCat Webhook | ✅ Deployed | Real-time purchase notifications via Edge Function |
+| Firebase/GA4 | ✅ Working | 4 properties (HOP, MeditNation, Ear N Play, GPG) |
+| GA4 Retention | ✅ Fixed | Cohort report bug fixed (Feb 2026) |
+| Email IMAP | ✅ Working | Cost tracking from receipts |
+| Cartesia | ✅ Working | Credit tracking |
+| DeepSeek | ✅ Working | Blog generation via OpenAI SDK |
+| Resend | ✅ Configured | Email delivery |
 | OpenAI | ✅ Configured | API key valid |
-| Google AI Studio | ✅ Configured | Nano Banana / Gemini Image |
-| Smallest AI | ✅ Configured | TTS provider |
-| Credit Monitoring | ✅ Working | Checks 5 services |
-| TypeScript | ✅ Compiles | No errors |
+| Brevo | ✅ Configured | Email metrics tracking |
+| Credit Monitoring | ✅ Working | Checks 5+ services |
+| Telegram Bot | ✅ Deployed | Webhook-based, /revenue /mrr /costs /report /status |
+| Content Engine | ✅ Working | 162 biomarker topics seeded, 7 posts generated & published |
+| Dashboard | ✅ Working | Revenue, MRR, costs, credits, content approval UI |
+| TypeScript | ✅ Compiles | `tsx` runs fine |
 | Git Repository | ✅ Pushed | github.com/RBeato/business_manager |
 
-### ⚠️ Configured But No Data
+### ⚠️ Needs Attention
 
-| Component | Status | Reason |
-|-----------|--------|--------|
-| RevenueCat | ⚠️ Connected | Apps need `revenuecat_app_id` in database |
+| Component | Status | Issue |
+|-----------|--------|-------|
+| App Store Connect | ⚠️ 404 Error | Credentials may need refresh or key regeneration |
+| ElevenLabs | ⚠️ 403 Error | API key lacks `speech_history_read` permission |
+| GitHub Token | ⚠️ Limited | Fine-grained token missing private repo access (can't create PRs) |
+| GA4 for GPG/Ear N Play | ⚠️ 403 | Service account needs viewer access to these properties |
 
 ### ❌ Not Configured
 
 | Component | What's Missing |
 |-----------|----------------|
-| App Store Connect | `APP_STORE_CONNECT_KEY_ID`, `ISSUER_ID`, `PRIVATE_KEY` |
 | Google Play | `GOOGLE_PLAY_SERVICE_ACCOUNT_JSON` |
-| Firebase/GA4 | `FIREBASE_SERVICE_ACCOUNT_JSON`, GA4 Property IDs |
-| ElevenLabs | API key needs `speech_history_read` permission |
 | Anthropic | `ANTHROPIC_API_KEY` (optional, DeepSeek is primary) |
-| Google Cloud | `GOOGLE_CLOUD_BILLING_ACCOUNT_ID` |
+| Google Cloud Billing | `GOOGLE_CLOUD_BILLING_ACCOUNT_ID` |
 | Supabase Management | `SUPABASE_MANAGEMENT_API_KEY` |
 | Neon | `NEON_API_KEY` |
 
@@ -107,36 +116,33 @@
 
 ## TODO
 
-### 🔴 High Priority (Required for Core Functionality)
+### 🔴 High Priority
 
-- [ ] **Get App Store Connect API credentials**
+- [ ] **Fix GitHub Token for PR publishing**
+  - Current fine-grained token can't access private repos (`healthopenpage-web`, etc.)
+  - Options:
+    1. Update fine-grained token to include all repos with `Contents: Read/Write` and `Pull requests: Read/Write`
+    2. Create a classic token with `repo` scope
+  - Until fixed, use `npx tsx scripts/publish-local.ts` for local file publishing
+  - After fixing, `npm run content:publish` will create GitHub PRs automatically
+
+- [ ] **Push 7 published blog posts to HOP production**
+  - Files are created locally in `/Users/rbsou/Documents/CODE/open_page/src/app/blog/`
+  - Sitemap updated with 7 new URLs
+  - Need to: `cd /Users/rbsou/Documents/CODE/open_page && git add . && git commit && git push`
+  - Vercel will auto-deploy once pushed
+
+- [ ] **Fix App Store Connect 404 error**
   - Go to: appstoreconnect.apple.com → Users and Access → Integrations → API
-  - Generate key with "Sales and Reports" role
-  - Add to `.env`: `APP_STORE_CONNECT_KEY_ID`, `ISSUER_ID`, `PRIVATE_KEY`
+  - Regenerate key with "Sales and Reports" role
+  - Update `.env`: `APP_STORE_CONNECT_KEY_ID`, `ISSUER_ID`, `PRIVATE_KEY`
 
 - [ ] **Get Google Play service account**
   - Go to: console.cloud.google.com → Service Accounts
   - Create service account with Play Developer API access
   - Download JSON and add to `.env`: `GOOGLE_PLAY_SERVICE_ACCOUNT_JSON`
 
-- [ ] **Update apps table with RevenueCat IDs**
-  ```sql
-  UPDATE apps SET revenuecat_app_id = 'appl_prpApVWAYBlggmwrdRByOyHgaHR' WHERE slug = 'guitar_progression_generator';
-  UPDATE apps SET revenuecat_app_id = 'appl_sgozdSqYlPHkHqlMAdZxvLdEHnx' WHERE slug = 'smguitar';
-  UPDATE apps SET revenuecat_app_id = 'appl_RTTMGHqEhNeMPRFVLAlVKQcKtIo' WHERE slug = 'ear_n_play';
-  UPDATE apps SET revenuecat_app_id = 'appl_zAOldDeDHiNaeSjrkyUOizPqjod' WHERE slug = 'meditnation_mobile';
-  ```
-
-- [ ] **Update apps table with bundle IDs and package names**
-  ```sql
-  UPDATE apps SET
-    apple_bundle_id = 'com.romeubeato.guitar-progression-generator',
-    google_package_name = 'com.romeubeato.chord_generator_for_guitar_v2'
-  WHERE slug = 'guitar_progression_generator';
-  -- Repeat for other apps...
-  ```
-
-- [ ] **Set up daily automation**
+- [ ] **Set up daily automation (cron)**
   ```bash
   crontab -e
   # Add:
@@ -144,64 +150,109 @@
   0 */6 * * * cd /Users/rbsou/Documents/CODE/business_manager && npm run check-credits >> /tmp/credits.log 2>&1
   ```
 
-### 🟡 Medium Priority (Enhanced Functionality)
+### 🟡 Medium Priority
 
 - [ ] **Fix ElevenLabs API key**
   - Go to: elevenlabs.io → Profile → API key
   - Create new key with `speech_history_read` permission
 
-- [ ] **Get Firebase service account**
-  - Go to: console.firebase.google.com → Project Settings → Service Accounts
-  - Generate new private key
-  - Add to `.env`: `FIREBASE_SERVICE_ACCOUNT_JSON`
+- [ ] **Fix GA4 access for Guitar Progression Generator & Ear N Play**
+  - Grant the Firebase service account viewer access to these GA4 properties
+  - Or create new GA4 properties and link them
 
-- [ ] **Get GA4 Property IDs**
-  - Go to: analytics.google.com → Admin → Property Settings
-  - Copy Property ID for each app
-  - Update apps table with `ga4_property_id`
+- [ ] **Continue biomarker content generation**
+  - 163 topics remaining in queue (of 170 total)
+  - Run: `npm run content:generate-biomarker healthopenpage 10`
+  - Then: `npx tsx scripts/publish-local.ts` to create page files
+  - Target: 50-100 biomarker pages for programmatic SEO
 
 - [ ] **Verify Resend domain**
   - Go to: resend.com → Domains
   - Add `healthopenpage.com` (or your domain)
   - Add DNS records for verification
-  - Currently limited to sending to your own email
 
-- [ ] **Test full report generation**
-  ```bash
-  npm run report -- --send
-  ```
+- [ ] **GSC indexing issues**
+  - meditnation.org: 16 "Discovered – not indexed" pages
+  - riffroutine.com: 1 "Blocked due to 4xx" page
+  - Submit sitemaps in Google Search Console after publishing new content
 
-### 🟢 Low Priority (Nice to Have)
+### 🟢 Low Priority
 
 - [ ] **Get Supabase Management API key**
   - Go to: supabase.com/dashboard → Account → Access Tokens
-  - Enables tracking Supabase project usage/costs
 
 - [ ] **Get Neon API key**
   - Go to: console.neon.tech → Account Settings → API Keys
-  - Enables tracking Neon database costs
 
 - [ ] **Get Google Cloud billing setup**
   - Enable BigQuery billing export
-  - Get billing account ID
 
 - [ ] **Add Anthropic API key** (optional fallback)
   - Go to: console.anthropic.com → API Keys
 
 ---
 
+## Content Engine Status
+
+### Completed
+- [x] AI blog generation with DeepSeek (via OpenAI SDK)
+- [x] Biomarker programmatic SEO templates (4 categories: biomarker, panel, condition, results)
+- [x] 162 biomarker topics seeded (81 biomarkers, 20 panels, 30 conditions, 31 results)
+- [x] 7 blog posts generated and published locally for HOP
+- [x] Local publishing script (`scripts/publish-local.ts`) — creates page.tsx files with full SEO metadata, structured data, FAQ schema, medical disclaimer
+- [x] Sitemap auto-update on publish
+- [x] Telegram bot approval workflow (approve/reject/preview via Telegram)
+- [x] Dashboard approval UI
+- [x] RevenueCat webhook for real-time purchase notifications
+- [x] HOP homepage: fixed language default (pt → en for SEO)
+- [x] HOP homepage: added navigation bar + internal links to blog/features
+- [x] HOP: created public `/features/lab-analysis` landing page with structured data
+- [x] DeepSeek API: switched from Anthropic SDK to OpenAI SDK (404 fix)
+
+### Published Blog Posts (HOP) — pending git push
+| Slug | Title | SEO | Words |
+|------|-------|-----|-------|
+| ferritin-levels-your-complete-guide-to-understanding-iron-st | Ferritin Levels: Complete Guide to Iron Stores | 75 | 2,069 |
+| hba1c-test-your-complete-guide-to-blood-sugar-health | HbA1c Test: Complete Guide to Blood Sugar Health | 90 | 1,913 |
+| cbc-test-explained-your-complete-blood-count-guide | CBC Test Explained: Complete Blood Count Guide | 60 | 1,978 |
+| testosterone-levels-normal-ranges-health-guide | Testosterone Levels: Normal Ranges & Health Guide | 75 | 2,499 |
+| triglycerides-causes-risks-and-how-to-lower-them | Triglycerides: Causes, Risks, and How to Lower Them | 100 | 2,165 |
+| tsh-levels-your-guide-to-the-master-thyroid-hormone-test | TSH Levels: Master Thyroid Hormone Test | 90 | 2,425 |
+| blood-glucose-levels-fasting-random-sugar-explained | Blood Glucose Levels: Fasting & Random Sugar | 75 | 2,310 |
+
+### Content Engine CLI Commands
+```bash
+npm run content:generate healthopenpage           # Generate 1 general blog post
+npm run content:generate-biomarker healthopenpage  # Generate 1 biomarker page
+npm run content:generate-biomarker healthopenpage 10  # Generate 10 biomarker pages
+npm run content:generate-biomarker healthopenpage panel  # Generate 1 panel page
+npm run content:seed                               # Seed general topics
+npm run content:seed-biomarkers                    # Seed 162 biomarker topics
+npm run content:publish                            # Publish via GitHub PRs (needs token fix)
+npx tsx scripts/publish-local.ts                   # Publish locally (creates files directly)
+```
+
+### Publishing Workflow
+1. **Generate**: `npm run content:generate-biomarker healthopenpage 5`
+2. **Review**: Dashboard UI or Telegram bot (`/approve`, `/reject`)
+3. **Publish locally**: `npx tsx scripts/publish-local.ts`
+4. **Deploy**: `cd /Users/rbsou/Documents/CODE/open_page && git add . && git commit && git push`
+5. Vercel auto-deploys on push
+
+---
+
 ## Future Enhancements
 
-### Phase 1: Dashboard (Web UI)
-
-- [ ] Create Next.js dashboard
-- [ ] Portfolio overview page with charts
-- [ ] Per-app detail pages
-- [ ] Cost breakdown visualizations
+### Phase 1: Dashboard (Web UI) — PARTIALLY DONE
+- [x] Create Next.js dashboard
+- [x] Portfolio overview page with charts
+- [x] Per-app detail pages
+- [x] Cost breakdown visualizations
+- [x] Content approval UI
 - [ ] Trend analysis graphs
+- [ ] Content performance analytics (GSC integration)
 
 ### Phase 2: Advanced Analytics
-
 - [ ] Cohort analysis
 - [ ] LTV (Lifetime Value) calculations
 - [ ] Predictive churn modeling
@@ -209,29 +260,29 @@
 - [ ] Funnel analysis
 
 ### Phase 3: Alerts & Automation
-
 - [ ] Anomaly detection (revenue drops, install spikes)
-- [ ] Slack/Discord notifications
+- [x] Telegram notifications (purchases, renewals, cancellations)
 - [ ] Custom alert thresholds per app
 - [ ] Weekly/monthly report options
+- [ ] Automated content generation cron
 - [ ] Competitor tracking
 
 ### Phase 4: Integrations
-
 - [ ] Stripe (for web payments)
 - [ ] Mixpanel/Amplitude
 - [ ] Crashlytics/Sentry
 - [ ] App Store reviews sentiment analysis
-- [ ] Social media mentions
+- [ ] Google Search Console API integration
 
 ---
 
 ## Known Issues
 
-1. **ElevenLabs 401 Error**: API key lacks `speech_history_read` permission
-2. **Cartesia 404**: Usage endpoint may have changed, falls back to account endpoint
-3. **RevenueCat 0 records**: Apps in database don't have `revenuecat_app_id` set
-4. **App Store/Google Play stubs**: Some API methods are placeholders awaiting real credentials
+1. **App Store Connect 404**: Credentials may need regeneration
+2. **ElevenLabs 403**: API key lacks `speech_history_read` permission
+3. **GA4 403 on 2 properties**: Service account missing viewer access for GPG and Ear N Play
+4. **GitHub Token**: Fine-grained token missing private repo access — use `publish-local.ts` instead
+5. **Pre-existing type errors**: `src/content/generator.ts` — `tsc --noEmit` fails on Anthropic SDK types (non-blocking, `tsx` runs fine)
 
 ---
 
@@ -250,7 +301,7 @@ Supabase handles automatic backups, but consider:
 ### Monitoring
 - Check `/tmp/metrics.log` and `/tmp/credits.log` for cron job output
 - Monitor Supabase dashboard for database health
-- Set up uptime monitoring for Edge Functions if deployed
+- Check Edge Function logs: `supabase functions logs telegram-webhook` / `revenuecat-webhook`
 
 ---
 
@@ -258,12 +309,23 @@ Supabase handles automatic backups, but consider:
 
 ### Commands
 ```bash
-npm run test:ingestion   # Test all data sources
-npm run ingest           # Run full ingestion
-npm run report           # Generate report (no send)
-npm run report -- --send # Generate and email report
-npm run check-credits    # Check API credit balances
-npm run setup            # Validate configuration
+npm run dev                 # Full ingestion + report
+npm run ingest              # Run data ingestion only
+npm run report              # Generate report (no send)
+npm run report -- --send    # Generate and email report
+npm run check-credits       # Check API credit balances
+npm run setup               # Validate configuration
+
+# Content Engine
+npm run content:generate healthopenpage          # Generate blog post
+npm run content:generate-biomarker healthopenpage 5  # Generate biomarker pages
+npm run content:seed-biomarkers                  # Seed biomarker topics
+npx tsx scripts/publish-local.ts                 # Publish to local repo
+
+# Telegram & Webhooks
+npm run telegram:deploy     # Deploy Telegram webhook
+npm run revenuecat:deploy   # Deploy RevenueCat webhook
+npm run revenuecat:logs     # View RevenueCat webhook logs
 ```
 
 ### Key URLs
@@ -272,3 +334,8 @@ npm run setup            # Validate configuration
 - RevenueCat: https://app.revenuecat.com
 - App Store Connect: https://appstoreconnect.apple.com
 - Google Play Console: https://play.google.com/console
+- Dashboard: http://localhost:3002 (run `cd dashboard && npm run dev`)
+
+---
+
+**Last Updated**: February 16, 2026

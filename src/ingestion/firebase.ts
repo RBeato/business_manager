@@ -199,8 +199,7 @@ async function fetchRetention(
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          dateRanges: [{ startDate: dateStr, endDate: dateStr }],
-          dimensions: [{ name: 'cohortNthDay' }],
+          dimensions: [{ name: 'cohort' }, { name: 'cohortNthDay' }],
           metrics: [{ name: 'cohortActiveUsers' }, { name: 'cohortTotalUsers' }],
           cohortSpec: {
             cohorts: [
@@ -236,7 +235,7 @@ async function fetchRetention(
     let d30 = null;
 
     for (const row of data.rows || []) {
-      const day = parseInt(row.dimensionValues[0]?.value || '0', 10);
+      const day = parseInt(row.dimensionValues[1]?.value || '0', 10);
       const activeUsers = parseInt(row.metricValues[0]?.value || '0', 10);
       const totalUsers = parseInt(row.metricValues[1]?.value || '0', 10);
 
