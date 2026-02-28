@@ -1,0 +1,8 @@
+name = "revenuecat-webhook"
+main = "index.ts"
+compatibility_date = "2024-01-01"
+
+# Secrets (set via: npx wrangler secret put <NAME>)
+# - REVENUECAT_WEBHOOK_SECRET
+# - TELEGRAM_BOT_TOKEN
+# - TELEGRAM_CHAT_ID

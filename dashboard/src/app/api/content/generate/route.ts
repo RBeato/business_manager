@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { supabase } from '@/lib/supabase'
+import { getDb, parseJson } from '@/lib/db'
+import crypto from 'crypto'
 
 const WEBSITE_CONFIG = {
   healthopenpage: {
@@ -48,6 +49,7 @@ export async function POST(request: NextRequest) {
 
   const site = website as Website
   const config = WEBSITE_CONFIG[site]
+  const db = getDb()
 
   let topicText: string
   let targetKeyword: string
@@ -55,33 +57,25 @@ export async function POST(request: NextRequest) {
   let topicId: string | null = null
 
   if (customTopic) {
-    // Custom topic provided by user
     topicText = customTopic
     targetKeyword = customKeyword || customTopic
     searchVolume = 0
   } else {
-    // Get highest priority queued topic
-    const { data: topic, error: topicError } = await supabase
-      .from('blog_topics')
-      .select('*')
-      .eq('website', site)
-      .eq('status', 'queued')
-      .order('priority', { ascending: false })
-      .order('created_at', { ascending: true })
-      .limit(1)
-      .single()
+    const topic = db.prepare(
+      "SELECT * FROM blog_topics WHERE website = ? AND status = 'queued' ORDER BY priority DESC, created_at ASC LIMIT 1"
+    ).get(site) as Record<string, unknown> | undefined
 
-    if (topicError || !topic) {
+    if (!topic) {
       return NextResponse.json(
         { error: `No queued topics for ${website}. Run 'npm run content:seed' to populate.` },
         { status: 404 }
       )
     }
 
-    topicText = topic.topic
-    targetKeyword = topic.target_keyword || topic.topic
-    searchVolume = topic.search_volume || 0
-    topicId = topic.id
+    topicText = topic.topic as string
+    targetKeyword = (topic.target_keyword as string) || topicText
+    searchVolume = (topic.search_volume as number) || 0
+    topicId = topic.id as string
   }
 
   const apiKey = process.env.DEEPSEEK_API_KEY
@@ -164,7 +158,6 @@ Return ONLY valid JSON with this structure (no markdown, no code blocks):
 Generate the blog post now:`
 
   try {
-    // Call DeepSeek API (OpenAI-compatible endpoint)
     const response = await fetch('https://api.deepseek.com/chat/completions', {
       method: 'POST',
       headers: {
@@ -192,7 +185,6 @@ Generate the blog post now:`
     }
     const responseText = aiResult.choices[0]?.message?.content || ''
 
-    // Parse JSON from response
     const jsonMatch = responseText.match(/\{[\s\S]*\}/)
     let parsed: { title: string; metaDescription: string; keywords: string[]; content: string }
 
@@ -216,44 +208,32 @@ Generate the blog post now:`
       }
     }
 
-    // Calculate SEO score
     const seoScore = calculateSEOScore(parsed.content, targetKeyword, parsed.title, parsed.metaDescription)
     const slug = generateSlug(parsed.title)
     const actualWordCount = parsed.content.split(/\s+/).filter((w: string) => w.length > 0).length
     const readingTime = Math.ceil(actualWordCount / 200)
+    const postId = crypto.randomUUID()
+    const now = new Date().toISOString()
 
-    // Save to database
-    const { data: savedPost, error: saveError } = await supabase
-      .from('blog_posts')
-      .insert({
-        website: site,
-        title: parsed.title,
-        slug,
-        content: parsed.content,
-        meta_description: parsed.metaDescription,
-        keywords: parsed.keywords,
-        target_keyword: targetKeyword,
-        seo_score: seoScore,
-        status: 'pending_review',
-        word_count: actualWordCount,
-        reading_time_minutes: readingTime,
-        generation_prompt: `Topic: ${topicText}\nKeyword: ${targetKeyword}${customNotes ? `\nNotes: ${customNotes}` : ''}`,
-        ai_model: 'deepseek-chat'
-      })
-      .select()
-      .single()
+    db.prepare(
+      `INSERT INTO blog_posts (id, website, title, slug, content, meta_description, keywords, target_keyword, seo_score, status, word_count, reading_time_minutes, generation_prompt, ai_model, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending_review', ?, ?, ?, ?, ?, ?)`
+    ).run(
+      postId, site, parsed.title, slug, parsed.content, parsed.metaDescription,
+      JSON.stringify(parsed.keywords), targetKeyword, seoScore,
+      actualWordCount, readingTime,
+      `Topic: ${topicText}\nKeyword: ${targetKeyword}${customNotes ? `\nNotes: ${customNotes}` : ''}`,
+      'deepseek-chat', now, now
+    )
 
-    if (saveError) {
-      return NextResponse.json({ error: saveError.message }, { status: 500 })
-    }
-
-    // Update topic status (only if we used a queued topic)
     if (topicId) {
-      await supabase
-        .from('blog_topics')
-        .update({ status: 'generated', related_blog_post_id: savedPost.id })
-        .eq('id', topicId)
+      db.prepare(
+        "UPDATE blog_topics SET status = 'generated', related_blog_post_id = ?, updated_at = ? WHERE id = ?"
+      ).run(postId, now, topicId)
     }
+
+    const savedPost = db.prepare('SELECT * FROM blog_posts WHERE id = ?').get(postId) as Record<string, unknown>
+    if (savedPost) savedPost.keywords = parseJson(savedPost.keywords)
 
     return NextResponse.json(savedPost)
   } catch (err) {

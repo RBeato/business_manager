@@ -1,23 +1,20 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { supabase } from '@/lib/supabase'
+import { getDb, parseJson } from '@/lib/db'
 
 export async function GET(
   _request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params
+  const db = getDb()
 
-  const { data, error } = await supabase
-    .from('blog_posts')
-    .select('*')
-    .eq('id', id)
-    .single()
-
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 404 })
+  const row = db.prepare('SELECT * FROM blog_posts WHERE id = ?').get(id) as Record<string, unknown> | undefined
+  if (!row) {
+    return NextResponse.json({ error: 'Not found' }, { status: 404 })
   }
 
-  return NextResponse.json(data)
+  row.keywords = parseJson(row.keywords)
+  return NextResponse.json(row)
 }
 
 export async function PATCH(
@@ -35,27 +32,17 @@ export async function PATCH(
     )
   }
 
-  const { data, error } = await supabase
-    .from('blog_posts')
-    .update({
-      status,
-      review_notes: review_notes || null,
-    })
-    .eq('id', id)
-    .select()
-    .single()
+  const db = getDb()
+  db.prepare('UPDATE blog_posts SET status = ?, review_notes = ?, updated_at = ? WHERE id = ?')
+    .run(status, review_notes || null, new Date().toISOString(), id)
 
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 })
-  }
-
-  // If rejected, reset the linked topic back to queued
   if (status === 'rejected') {
-    await supabase
-      .from('blog_topics')
-      .update({ status: 'queued', related_blog_post_id: null })
-      .eq('related_blog_post_id', id)
+    db.prepare("UPDATE blog_topics SET status = 'queued', related_blog_post_id = NULL WHERE related_blog_post_id = ?")
+      .run(id)
   }
 
-  return NextResponse.json(data)
+  const updated = db.prepare('SELECT * FROM blog_posts WHERE id = ?').get(id) as Record<string, unknown> | undefined
+  if (updated) updated.keywords = parseJson(updated.keywords)
+
+  return NextResponse.json(updated)
 }

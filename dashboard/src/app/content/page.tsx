@@ -35,7 +35,12 @@ const STATUS_LABELS: Record<PostStatus, string> = {
 }
 
 // Omit content from list view
-type PostSummary = Omit<BlogPost, 'content' | 'generation_prompt' | 'image_url' | 'ai_model' | 'scheduled_publish_date' | 'keywords'>
+type PostSummary = Omit<BlogPost, 'content' | 'generation_prompt' | 'ai_model' | 'scheduled_publish_date' | 'keywords'>
+
+function blogImageUrl(website: string, imagePath: string | null | undefined): string | null {
+  if (!imagePath) return null
+  return `/api/content/image?website=${encodeURIComponent(website)}&path=${encodeURIComponent(imagePath)}`
+}
 
 function ThemeToggle() {
   const [dark, setDark] = useState(false)
@@ -373,6 +378,17 @@ export default function ContentPage() {
                   </div>
                 )}
               </div>
+
+              {/* Featured image */}
+              {blogImageUrl(selectedPost.website, selectedPost.image_url) && (
+                <div className="bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-800 overflow-hidden">
+                  <img
+                    src={blogImageUrl(selectedPost.website, selectedPost.image_url)!}
+                    alt={selectedPost.title}
+                    className="w-full aspect-video object-cover"
+                  />
+                </div>
+              )}
 
               {/* Content preview */}
               <div className="bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-800 p-6 overflow-hidden">
@@ -713,6 +729,16 @@ export default function ContentPage() {
                 onClick={() => setSelectedPostId(post.id)}
                 className="text-left bg-white dark:bg-gray-900 p-5 rounded-xl border border-gray-200 dark:border-gray-800 hover:shadow-md hover:border-blue-300 dark:hover:border-blue-700 transition-all"
               >
+                {blogImageUrl(post.website, post.image_url) && (
+                  <div className="relative w-full aspect-video mb-3 rounded-lg overflow-hidden bg-gray-100 dark:bg-gray-800">
+                    <img
+                      src={blogImageUrl(post.website, post.image_url)!}
+                      alt={post.title}
+                      className="w-full h-full object-cover"
+                      loading="lazy"
+                    />
+                  </div>
+                )}
                 <div className="flex items-center gap-2 mb-3">
                   <span className={`px-2 py-0.5 text-xs font-medium rounded-full ${WEBSITE_COLORS[post.website]}`}>
                     {WEBSITE_LABELS[post.website]}

@@ -1,29 +1,22 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { supabase } from '@/lib/supabase'
+import { getDb } from '@/lib/db'
 
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url)
   const website = searchParams.get('website')
   const status = searchParams.get('status')
 
-  let query = supabase
-    .from('blog_topics')
-    .select('*')
-    .order('priority', { ascending: false })
-    .order('created_at', { ascending: true })
+  const db = getDb()
+  const conditions: string[] = []
+  const params: string[] = []
 
-  if (website) {
-    query = query.eq('website', website)
-  }
-  if (status) {
-    query = query.eq('status', status)
-  }
+  if (website) { conditions.push('website = ?'); params.push(website) }
+  if (status) { conditions.push('status = ?'); params.push(status) }
 
-  const { data, error } = await query
+  const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''
+  const rows = db.prepare(
+    `SELECT * FROM blog_topics ${where} ORDER BY priority DESC, created_at ASC`
+  ).all(...params)
 
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 })
-  }
-
-  return NextResponse.json(data)
+  return NextResponse.json(rows)
 }

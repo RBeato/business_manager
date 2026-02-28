@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { supabase, App, DailySearchConsole, DailyWebsiteTraffic, DailyUmamiStats } from '@/lib/supabase'
+import type { App, DailySearchConsole, DailyWebsiteTraffic, DailyUmamiStats } from '@/lib/supabase'
 import { format, subDays } from 'date-fns'
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
@@ -59,19 +59,17 @@ export default function AnalyticsPage() {
 
   useEffect(() => {
     async function fetchData() {
-      const startDate = format(subDays(new Date(), PERIOD_DAYS[period]), 'yyyy-MM-dd')
-
-      const [appsRes, gscRes, trafficRes, umamiRes] = await Promise.all([
-        supabase.from('apps').select('*').eq('is_active', true),
-        supabase.from('daily_search_console').select('*').gte('date', startDate).order('date'),
-        supabase.from('daily_website_traffic').select('*').gte('date', startDate).order('date'),
-        supabase.from('daily_umami_stats').select('*').gte('date', startDate).order('date'),
-      ])
-
-      if (appsRes.data) setApps(appsRes.data)
-      if (gscRes.data) setGscData(gscRes.data)
-      if (trafficRes.data) setTrafficData(trafficRes.data)
-      if (umamiRes.data) setUmamiData(umamiRes.data)
+      setLoading(true)
+      try {
+        const res = await fetch(`/api/analytics?period=${period}`)
+        const data = await res.json()
+        if (data.apps) setApps(data.apps)
+        if (data.gscData) setGscData(data.gscData)
+        if (data.trafficData) setTrafficData(data.trafficData)
+        if (data.umamiData) setUmamiData(data.umamiData)
+      } catch (error) {
+        console.error('Failed to fetch analytics data:', error)
+      }
       setLoading(false)
     }
     fetchData()

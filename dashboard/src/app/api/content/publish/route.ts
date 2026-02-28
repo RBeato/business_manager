@@ -1,13 +1,7 @@
 import { NextResponse } from 'next/server'
-import { createClient } from '@supabase/supabase-js'
+import { getDb, parseJson } from '@/lib/db'
 import { Octokit } from '@octokit/rest'
 
-// Use service role key for server-side operations (bypasses RLS)
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!
-const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-const supabase = createClient(supabaseUrl, supabaseKey)
-
-// GitHub repository configurations (mirrored from src/content/publisher.ts)
 const REPO_CONFIG = {
   healthopenpage: {
     owner: 'RBeato',
@@ -45,10 +39,6 @@ interface PublishError {
   error: string
 }
 
-/**
- * POST /api/content/publish
- * Publishes all approved blog posts by creating GitHub PRs
- */
 export async function POST() {
   const githubToken = process.env.GITHUB_TOKEN
   if (!githubToken) {
@@ -58,25 +48,20 @@ export async function POST() {
     )
   }
 
-  // Fetch all approved posts
-  const { data: posts, error: fetchError } = await supabase
-    .from('blog_posts')
-    .select('*')
-    .eq('status', 'approved')
-    .order('created_at', { ascending: true })
+  const db = getDb()
+  const posts = db.prepare(
+    "SELECT * FROM blog_posts WHERE status = 'approved' ORDER BY created_at ASC"
+  ).all() as Record<string, unknown>[]
 
-  if (fetchError) {
-    return NextResponse.json(
-      { error: `Failed to fetch approved posts: ${fetchError.message}` },
-      { status: 500 }
-    )
-  }
-
-  if (!posts || posts.length === 0) {
+  if (posts.length === 0) {
     return NextResponse.json(
       { error: 'No approved posts to publish' },
       { status: 404 }
     )
+  }
+
+  for (const post of posts) {
+    post.keywords = parseJson(post.keywords)
   }
 
   const octokit = new Octokit({ auth: githubToken })
@@ -85,18 +70,18 @@ export async function POST() {
 
   for (const post of posts) {
     try {
-      const prUrl = await publishSinglePost(octokit, post)
+      const prUrl = await publishSinglePost(octokit, db, post)
       results.push({
-        postId: post.id,
-        title: post.title,
-        website: post.website,
+        postId: post.id as string,
+        title: post.title as string,
+        website: post.website as Website,
         prUrl,
       })
     } catch (err) {
       errors.push({
-        postId: post.id,
-        title: post.title,
-        website: post.website,
+        postId: post.id as string,
+        title: post.title as string,
+        website: post.website as string,
         error: err instanceof Error ? err.message : String(err),
       })
     }
@@ -113,31 +98,18 @@ export async function POST() {
   })
 }
 
-/**
- * GET /api/content/publish
- * Returns count of approved posts ready to publish
- */
 export async function GET() {
-  const { count, error } = await supabase
-    .from('blog_posts')
-    .select('*', { count: 'exact', head: true })
-    .eq('status', 'approved')
+  const db = getDb()
+  const row = db.prepare(
+    "SELECT COUNT(*) as count FROM blog_posts WHERE status = 'approved'"
+  ).get() as { count: number }
 
-  if (error) {
-    return NextResponse.json(
-      { error: `Failed to count approved posts: ${error.message}` },
-      { status: 500 }
-    )
-  }
-
-  return NextResponse.json({ approvedCount: count || 0 })
+  return NextResponse.json({ approvedCount: row.count })
 }
 
-/**
- * Publish a single blog post to its target website via GitHub PR
- */
 async function publishSinglePost(
   octokit: Octokit,
+  db: ReturnType<typeof getDb>,
   post: Record<string, unknown>
 ): Promise<string> {
   const website = post.website as Website
@@ -149,11 +121,8 @@ async function publishSinglePost(
 
   const slug = post.slug as string
   const title = post.title as string
-
-  // Create branch name with timestamp to avoid collisions
   const branchName = `blog/${slug}-${Date.now()}`
 
-  // Get latest commit SHA from base branch
   const { data: ref } = await octokit.git.getRef({
     owner: config.owner,
     repo: config.repo,
@@ -162,7 +131,6 @@ async function publishSinglePost(
 
   const baseSha = ref.object.sha
 
-  // Create new branch
   await octokit.git.createRef({
     owner: config.owner,
     repo: config.repo,
@@ -170,10 +138,7 @@ async function publishSinglePost(
     sha: baseSha,
   })
 
-  // Generate blog post file content
   const fileContent = generateBlogPostFile(post)
-
-  // Create file in new branch
   const filePath = `${config.blogPath}/${slug}/page.tsx`
 
   await octokit.repos.createOrUpdateFileContents({
@@ -185,14 +150,12 @@ async function publishSinglePost(
     branch: branchName,
   })
 
-  // Update sitemap (best-effort)
   try {
     await updateSitemap(octokit, config, slug, branchName)
   } catch {
     // Sitemap update is non-critical
   }
 
-  // Create pull request
   const { data: pr } = await octokit.pulls.create({
     owner: config.owner,
     repo: config.repo,
@@ -202,22 +165,13 @@ async function publishSinglePost(
     body: generatePRDescription(post),
   })
 
-  // Update blog post status in database
-  await supabase
-    .from('blog_posts')
-    .update({
-      status: 'published',
-      published_date: new Date().toISOString(),
-      github_pr_url: pr.html_url,
-    })
-    .eq('id', post.id)
+  db.prepare(
+    'UPDATE blog_posts SET status = ?, published_date = ?, github_pr_url = ?, updated_at = ? WHERE id = ?'
+  ).run('published', new Date().toISOString(), pr.html_url, new Date().toISOString(), post.id)
 
   return pr.html_url
 }
 
-/**
- * Generate Next.js blog post page file content
- */
 function generateBlogPostFile(post: Record<string, unknown>): string {
   const title = (post.title as string).replace(/'/g, "\\'")
   const metaDescription = ((post.meta_description as string) || '').replace(/'/g, "\\'")
@@ -276,9 +230,6 @@ export default function BlogPost() {
 `
 }
 
-/**
- * Convert markdown to JSX (basic conversion, matching publisher.ts logic)
- */
 function convertMarkdownToJSX(markdown: string): string {
   return markdown
     .replace(/^## (.+)$/gm, '<h2 className="text-3xl font-bold text-gray-900 mb-4">$1</h2>')
@@ -288,9 +239,6 @@ function convertMarkdownToJSX(markdown: string): string {
     .replace(/^([^<\n].+)$/gm, '<p className="text-gray-700 mb-4">$1</p>')
 }
 
-/**
- * Update sitemap with new blog post entry
- */
 async function updateSitemap(
   octokit: Octokit,
   config: (typeof REPO_CONFIG)[Website],
@@ -335,9 +283,6 @@ async function updateSitemap(
   })
 }
 
-/**
- * Generate PR description
- */
 function generatePRDescription(post: Record<string, unknown>): string {
   const keywords = (post.keywords as string[]) || []
   return `## Automated Blog Post

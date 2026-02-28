@@ -4,12 +4,7 @@
  */
 
 import OpenAI from 'openai'
-import { createClient } from '@supabase/supabase-js'
-
-const supabase = createClient(
-  process.env.SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-)
+import { getDb, newId } from '../db/sqlite-client.js'
 
 // Website configurations
 const WEBSITE_CONFIG = {
@@ -344,43 +339,36 @@ export async function saveBlogPost(
   blogPost: BlogPostResult,
   generationPrompt: string
 ) {
-  const { data, error } = await supabase
-    .from('blog_posts')
-    .insert({
-      website,
-      title: blogPost.title,
-      slug: blogPost.slug,
-      content: blogPost.content,
-      meta_description: blogPost.metaDescription,
-      keywords: blogPost.keywords,
-      target_keyword: blogPost.keywords[0] || '',
-      image_url: blogPost.imageUrl || null,
-      seo_score: blogPost.seoScore,
-      status: 'pending_review',
-      word_count: blogPost.wordCount,
-      reading_time_minutes: blogPost.readingTimeMinutes,
-      generation_prompt: generationPrompt,
-      ai_model: 'deepseek-chat'
-    })
-    .select()
-    .single()
+  const db = getDb()
+  const id = newId()
+  const now = new Date().toISOString()
 
-  if (error) {
-    console.error('Failed to save blog post:', error)
-    throw error
-  }
+  db.prepare(`INSERT INTO blog_posts (
+    id, website, title, slug, content, meta_description, keywords,
+    target_keyword, image_url, seo_score, status, word_count,
+    reading_time_minutes, generation_prompt, ai_model, created_at, updated_at
+  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+    id, website, blogPost.title, blogPost.slug, blogPost.content,
+    blogPost.metaDescription, JSON.stringify(blogPost.keywords),
+    blogPost.keywords[0] || '', blogPost.imageUrl || null,
+    blogPost.seoScore, 'pending_review', blogPost.wordCount,
+    blogPost.readingTimeMinutes, generationPrompt, 'deepseek-chat', now, now
+  )
 
   // Update topic status
-  await supabase
-    .from('blog_topics')
-    .update({
-      status: 'generated',
-      related_blog_post_id: data.id
-    })
-    .eq('id', topicId)
+  db.prepare('UPDATE blog_topics SET status = ?, related_blog_post_id = ? WHERE id = ?')
+    .run('generated', id, topicId)
 
-  console.log(`💾 Saved to database: ${data.id}`)
-  return data
+  console.log(`💾 Saved to database: ${id}`)
+
+  return {
+    id, website, title: blogPost.title, slug: blogPost.slug,
+    content: blogPost.content, meta_description: blogPost.metaDescription,
+    keywords: blogPost.keywords, target_keyword: blogPost.keywords[0] || '',
+    seo_score: blogPost.seoScore, status: 'pending_review',
+    word_count: blogPost.wordCount, reading_time_minutes: blogPost.readingTimeMinutes,
+    image_url: blogPost.imageUrl || null, created_at: now, updated_at: now,
+  }
 }
 
 /**
@@ -690,18 +678,14 @@ export async function generateBiomarkerPage(params: GenerateBlogPostParams & { c
  * Generate blog post from topic queue
  */
 export async function generateFromQueue(website: Website) {
-  // Get highest priority queued topic
-  const { data: topic, error } = await supabase
-    .from('blog_topics')
-    .select('*')
-    .eq('website', website)
-    .eq('status', 'queued')
-    .order('priority', { ascending: false })
-    .order('created_at', { ascending: true })
-    .limit(1)
-    .single()
+  const db = getDb()
 
-  if (error || !topic) {
+  // Get highest priority queued topic
+  const topic = db.prepare(
+    "SELECT * FROM blog_topics WHERE website = ? AND status = 'queued' ORDER BY priority ASC, created_at ASC LIMIT 1"
+  ).get(website) as any | undefined
+
+  if (!topic) {
     console.log(`ℹ️  No queued topics for ${website}`)
     return null
   }

@@ -1,11 +1,5 @@
-import { createClient } from '@supabase/supabase-js'
+// Database types (kept for dashboard components)
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-
-export const supabase = createClient(supabaseUrl, supabaseAnonKey)
-
-// Database types
 export interface App {
   id: string
   slug: string
@@ -68,7 +62,6 @@ export interface Provider {
   category: string
 }
 
-// Analytics types
 export interface DailySearchConsole {
   id: string
   app_id: string
@@ -115,7 +108,6 @@ export interface DailyUmamiStats {
   top_browsers: Record<string, number> | null
 }
 
-// Content Engine types
 export interface BlogPost {
   id: string
   website: 'healthopenpage' | 'meditnation' | 'riffroutine'

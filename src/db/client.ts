@@ -1,5 +1,3 @@
-import { createClient, SupabaseClient } from '@supabase/supabase-js';
-import { getConfig } from '../config/index.js';
 import type {
   App,
   Provider,
@@ -16,26 +14,63 @@ import type {
   DailyReport,
   IngestionLog,
 } from '../types/index.js';
+import { getDb, newId, parseJson, toJson, toBool, fromBool } from './sqlite-client.js';
 
-// Use a simpler generic type to avoid strict type checking issues
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-let supabaseClient: SupabaseClient<any> | null = null;
+// Re-export for convenience
+export { getDb, closeDb } from './sqlite-client.js';
 
-export function getSupabaseClient(): SupabaseClient {
-  if (!supabaseClient) {
-    const config = getConfig();
-    supabaseClient = createClient(
-      config.supabase.url,
-      config.supabase.serviceRoleKey,
-      {
-        auth: {
-          autoRefreshToken: false,
-          persistSession: false,
-        },
-      }
-    );
+// ============================================
+// ROW MAPPERS (SQLite rows → typed objects)
+// ============================================
+
+function mapApp(row: Record<string, unknown>): App {
+  return {
+    ...row,
+    platforms: parseJson(row.platforms as string, []),
+    is_active: toBool(row.is_active as number),
+    api_config: undefined, // apps don't have api_config
+  } as unknown as App;
+}
+
+function mapProvider(row: Record<string, unknown>): Provider {
+  return {
+    ...row,
+    api_config: parseJson(row.api_config as string, {}),
+    is_active: toBool(row.is_active as number),
+  } as unknown as Provider;
+}
+
+function mapJsonFields(row: Record<string, unknown>, fields: string[]): Record<string, unknown> {
+  const result = { ...row };
+  for (const field of fields) {
+    if (field in result && typeof result[field] === 'string') {
+      result[field] = parseJson(result[field] as string, null);
+    }
   }
-  return supabaseClient;
+  return result;
+}
+
+const JSON_FIELDS_BY_TABLE: Record<string, string[]> = {
+  daily_installs: ['raw_data'],
+  daily_revenue: ['raw_data'],
+  daily_subscriptions: ['raw_data'],
+  daily_active_users: ['raw_data'],
+  daily_feature_usage: ['raw_data'],
+  daily_provider_costs: ['raw_data', 'cost_breakdown', 'usage_breakdown'],
+  daily_website_traffic: ['raw_data'],
+  daily_email_metrics: ['raw_data'],
+  daily_search_console: ['raw_data'],
+  daily_umami_stats: ['raw_data', 'top_pages', 'top_referrers', 'top_countries', 'top_browsers'],
+  daily_reports: ['insights', 'metrics_snapshot', 'email_recipients'],
+  ingestion_logs: ['error_details', 'request_metadata', 'response_metadata'],
+  blog_posts: ['keywords'],
+  telegram_notifications: ['metadata'],
+  revenuecat_events: ['webhook_payload', 'entitlement_ids'],
+};
+
+function mapRows<T>(table: string, rows: Record<string, unknown>[]): T[] {
+  const jsonFields = JSON_FIELDS_BY_TABLE[table] || [];
+  return rows.map((row) => mapJsonFields(row, jsonFields) as T);
 }
 
 // ============================================
@@ -43,29 +78,15 @@ export function getSupabaseClient(): SupabaseClient {
 // ============================================
 
 export async function getActiveApps(): Promise<App[]> {
-  const supabase = getSupabaseClient();
-  const { data, error } = await supabase
-    .from('apps')
-    .select('*')
-    .eq('is_active', true)
-    .order('slug');
-
-  if (error) throw new Error(`Failed to fetch apps: ${error.message}`);
-  return (data || []) as App[];
+  const db = getDb();
+  const rows = db.prepare('SELECT * FROM apps WHERE is_active = 1 ORDER BY slug').all() as Record<string, unknown>[];
+  return rows.map(mapApp);
 }
 
 export async function getAppBySlug(slug: string): Promise<App | null> {
-  const supabase = getSupabaseClient();
-  const { data, error } = await supabase
-    .from('apps')
-    .select('*')
-    .eq('slug', slug)
-    .single();
-
-  if (error && error.code !== 'PGRST116') {
-    throw new Error(`Failed to fetch app: ${error.message}`);
-  }
-  return data as App | null;
+  const db = getDb();
+  const row = db.prepare('SELECT * FROM apps WHERE slug = ?').get(slug) as Record<string, unknown> | undefined;
+  return row ? mapApp(row) : null;
 }
 
 // ============================================
@@ -73,29 +94,66 @@ export async function getAppBySlug(slug: string): Promise<App | null> {
 // ============================================
 
 export async function getActiveProviders(): Promise<Provider[]> {
-  const supabase = getSupabaseClient();
-  const { data, error } = await supabase
-    .from('providers')
-    .select('*')
-    .eq('is_active', true)
-    .order('slug');
-
-  if (error) throw new Error(`Failed to fetch providers: ${error.message}`);
-  return (data || []) as Provider[];
+  const db = getDb();
+  const rows = db.prepare('SELECT * FROM providers WHERE is_active = 1 ORDER BY slug').all() as Record<string, unknown>[];
+  return rows.map(mapProvider);
 }
 
 export async function getProviderBySlug(slug: string): Promise<Provider | null> {
-  const supabase = getSupabaseClient();
-  const { data, error } = await supabase
-    .from('providers')
-    .select('*')
-    .eq('slug', slug)
-    .single();
+  const db = getDb();
+  const row = db.prepare('SELECT * FROM providers WHERE slug = ?').get(slug) as Record<string, unknown> | undefined;
+  return row ? mapProvider(row) : null;
+}
 
-  if (error && error.code !== 'PGRST116') {
-    throw new Error(`Failed to fetch provider: ${error.message}`);
+// ============================================
+// GENERIC UPSERT HELPER
+// ============================================
+
+function upsert(table: string, data: Record<string, unknown>, conflictCols: string): void {
+  const db = getDb();
+  const jsonFields = JSON_FIELDS_BY_TABLE[table] || [];
+
+  // Add id and created_at
+  const row: Record<string, unknown> = {
+    id: newId(),
+    created_at: new Date().toISOString(),
+    ...data,
+  };
+
+  // Serialize JSON fields
+  for (const field of jsonFields) {
+    if (field in row && row[field] != null && typeof row[field] !== 'string') {
+      row[field] = toJson(row[field]);
+    }
   }
-  return data as Provider | null;
+
+  // Convert booleans to integers
+  for (const [key, value] of Object.entries(row)) {
+    if (typeof value === 'boolean') {
+      row[key] = fromBool(value);
+    }
+    // Convert undefined to null
+    if (value === undefined) {
+      row[key] = null;
+    }
+    // Convert arrays to JSON for non-json fields
+    if (Array.isArray(value)) {
+      row[key] = JSON.stringify(value);
+    }
+  }
+
+  const cols = Object.keys(row);
+  const placeholders = cols.map(() => '?').join(', ');
+  const conflictColsList = conflictCols.split(',').map(c => c.trim());
+  const updateCols = cols.filter(
+    (c) => c !== 'id' && c !== 'created_at' && !conflictColsList.includes(c)
+  );
+  const updateSet = updateCols.map((c) => `${c} = excluded.${c}`).join(', ');
+
+  const sql = `INSERT INTO ${table} (${cols.join(', ')}) VALUES (${placeholders})
+    ON CONFLICT(${conflictCols}) DO UPDATE SET ${updateSet}`;
+
+  db.prepare(sql).run(...cols.map((c) => row[c] ?? null));
 }
 
 // ============================================
@@ -105,122 +163,83 @@ export async function getProviderBySlug(slug: string): Promise<Provider | null> 
 export async function upsertDailyInstalls(
   data: Omit<DailyInstalls, 'id' | 'created_at'>
 ): Promise<void> {
-  const supabase = getSupabaseClient();
-  const { error } = await supabase.from('daily_installs').upsert(data, {
-    onConflict: 'app_id,date,platform,country',
-  });
-
-  if (error) throw new Error(`Failed to upsert daily_installs: ${error.message}`);
+  const row = { ...data, country: data.country ?? '' };
+  upsert('daily_installs', row as unknown as Record<string, unknown>, 'app_id, date, platform, country');
 }
 
 export async function upsertDailyRevenue(
   data: Omit<DailyRevenue, 'id' | 'created_at'>
 ): Promise<void> {
-  const supabase = getSupabaseClient();
-  const { error } = await supabase.from('daily_revenue').upsert(data, {
-    onConflict: 'app_id,date,platform,country,currency',
-  });
-
-  if (error) throw new Error(`Failed to upsert daily_revenue: ${error.message}`);
+  const row = { ...data, country: data.country ?? '' };
+  upsert('daily_revenue', row as unknown as Record<string, unknown>, 'app_id, date, platform, country, currency');
 }
 
 export async function upsertDailySubscriptions(
   data: Omit<DailySubscriptions, 'id' | 'created_at'>
 ): Promise<void> {
-  const supabase = getSupabaseClient();
-  const { error } = await supabase.from('daily_subscriptions').upsert(data, {
-    onConflict: 'app_id,date,platform,product_id',
-  });
-
-  if (error) throw new Error(`Failed to upsert daily_subscriptions: ${error.message}`);
+  const row = { ...data, product_id: data.product_id ?? '' };
+  upsert('daily_subscriptions', row as unknown as Record<string, unknown>, 'app_id, date, platform, product_id');
 }
 
 export async function upsertDailyActiveUsers(
   data: Omit<DailyActiveUsers, 'id' | 'created_at'>
 ): Promise<void> {
-  const supabase = getSupabaseClient();
-  const { error } = await supabase.from('daily_active_users').upsert(data, {
-    onConflict: 'app_id,date,platform',
-  });
-
-  if (error) throw new Error(`Failed to upsert daily_active_users: ${error.message}`);
+  upsert('daily_active_users', data as unknown as Record<string, unknown>, 'app_id, date, platform');
 }
 
 export async function upsertDailyFeatureUsage(
   data: Omit<DailyFeatureUsage, 'id' | 'created_at'>
 ): Promise<void> {
-  const supabase = getSupabaseClient();
-  const { error } = await supabase.from('daily_feature_usage').upsert(data, {
-    onConflict: 'app_id,date,platform,feature_name',
-  });
-
-  if (error) throw new Error(`Failed to upsert daily_feature_usage: ${error.message}`);
+  upsert('daily_feature_usage', data as unknown as Record<string, unknown>, 'app_id, date, platform, feature_name');
 }
 
 export async function upsertDailyProviderCosts(
   data: Omit<DailyProviderCosts, 'id' | 'created_at'>
 ): Promise<void> {
-  const supabase = getSupabaseClient();
-  const { error } = await supabase.from('daily_provider_costs').upsert(data, {
-    onConflict: 'provider_id,app_id,date',
-  });
-
-  if (error) throw new Error(`Failed to upsert daily_provider_costs: ${error.message}`);
+  const row = { ...data, app_id: data.app_id ?? '' };
+  upsert('daily_provider_costs', row as unknown as Record<string, unknown>, 'provider_id, app_id, date');
 }
 
 export async function upsertDailyWebsiteTraffic(
   data: Omit<DailyWebsiteTraffic, 'id' | 'created_at'>
 ): Promise<void> {
-  const supabase = getSupabaseClient();
-  const { error } = await supabase.from('daily_website_traffic').upsert(data, {
-    onConflict: 'app_id,date,source,medium,campaign',
-  });
-
-  if (error) throw new Error(`Failed to upsert daily_website_traffic: ${error.message}`);
+  const row = {
+    ...data,
+    source: data.source ?? '',
+    medium: data.medium ?? '',
+    campaign: data.campaign ?? '',
+  };
+  upsert('daily_website_traffic', row as unknown as Record<string, unknown>, 'app_id, date, source, medium, campaign');
 }
 
 export async function upsertDailyEmailMetrics(
   data: Omit<DailyEmailMetrics, 'id' | 'created_at'>
 ): Promise<void> {
-  const supabase = getSupabaseClient();
-  const { error } = await supabase.from('daily_email_metrics').upsert(data, {
-    onConflict: 'app_id,date,email_type',
-  });
-
-  if (error) throw new Error(`Failed to upsert daily_email_metrics: ${error.message}`);
+  const row = { ...data, app_id: data.app_id ?? '' };
+  upsert('daily_email_metrics', row as unknown as Record<string, unknown>, 'app_id, date, email_type');
 }
 
 export async function upsertDailySearchConsole(
   data: Omit<DailySearchConsole, 'id' | 'created_at'>
 ): Promise<void> {
-  const supabase = getSupabaseClient();
-  const { error } = await supabase.from('daily_search_console').upsert(data, {
-    onConflict: 'app_id,date,query,page',
-  });
-
-  if (error) throw new Error(`Failed to upsert daily_search_console: ${error.message}`);
+  const row = {
+    ...data,
+    query: data.query ?? '',
+    page: data.page ?? '',
+  };
+  upsert('daily_search_console', row as unknown as Record<string, unknown>, 'app_id, date, query, page');
 }
 
 export async function upsertDailyUmamiStats(
   data: Omit<DailyUmamiStats, 'id' | 'created_at'>
 ): Promise<void> {
-  const supabase = getSupabaseClient();
-  const { error } = await supabase.from('daily_umami_stats').upsert(data, {
-    onConflict: 'app_id,date,website_id',
-  });
-
-  if (error) throw new Error(`Failed to upsert daily_umami_stats: ${error.message}`);
+  upsert('daily_umami_stats', data as unknown as Record<string, unknown>, 'app_id, date, website_id');
 }
 
 export async function upsertDailyReport(
   data: Omit<DailyReport, 'id' | 'created_at'>
 ): Promise<void> {
-  const supabase = getSupabaseClient();
-  const { error } = await supabase.from('daily_reports').upsert(data, {
-    onConflict: 'date,report_type',
-  });
-
-  if (error) throw new Error(`Failed to upsert daily_report: ${error.message}`);
+  upsert('daily_reports', data as unknown as Record<string, unknown>, 'date, report_type');
 }
 
 // ============================================
@@ -230,28 +249,49 @@ export async function upsertDailyReport(
 export async function createIngestionLog(
   data: Omit<IngestionLog, 'id' | 'created_at'>
 ): Promise<string> {
-  const supabase = getSupabaseClient();
-  const { data: result, error } = await supabase
-    .from('ingestion_logs')
-    .insert(data)
-    .select('id')
-    .single();
+  const db = getDb();
+  const id = newId();
+  const row: Record<string, unknown> = {
+    id,
+    created_at: new Date().toISOString(),
+    ...data,
+  };
 
-  if (error) throw new Error(`Failed to create ingestion log: ${error.message}`);
-  return (result as { id: string }).id;
+  // Serialize JSON fields
+  for (const field of ['error_details', 'request_metadata', 'response_metadata']) {
+    if (field in row && row[field] != null && typeof row[field] !== 'string') {
+      row[field] = toJson(row[field]);
+    }
+  }
+
+  const cols = Object.keys(row);
+  const placeholders = cols.map(() => '?').join(', ');
+  const sql = `INSERT INTO ingestion_logs (${cols.join(', ')}) VALUES (${placeholders})`;
+  db.prepare(sql).run(...cols.map((c) => row[c] ?? null));
+  return id;
 }
 
 export async function updateIngestionLog(
   id: string,
   updates: Partial<IngestionLog>
 ): Promise<void> {
-  const supabase = getSupabaseClient();
-  const { error } = await supabase
-    .from('ingestion_logs')
-    .update(updates)
-    .eq('id', id);
+  const db = getDb();
+  const data: Record<string, unknown> = { ...updates };
 
-  if (error) throw new Error(`Failed to update ingestion log: ${error.message}`);
+  // Serialize JSON fields
+  for (const field of ['error_details', 'request_metadata', 'response_metadata']) {
+    if (field in data && data[field] != null && typeof data[field] !== 'string') {
+      data[field] = toJson(data[field]);
+    }
+  }
+
+  delete data.id;
+  delete data.created_at;
+
+  const setClauses = Object.keys(data).map((k) => `${k} = ?`).join(', ');
+  const values = Object.values(data).map((v) => v ?? null);
+
+  db.prepare(`UPDATE ingestion_logs SET ${setClauses} WHERE id = ?`).run(...values, id);
 }
 
 // ============================================
@@ -265,22 +305,20 @@ export async function getDailyMetricsForDate(date: string): Promise<{
   activeUsers: DailyActiveUsers[];
   providerCosts: DailyProviderCosts[];
 }> {
-  const supabase = getSupabaseClient();
+  const db = getDb();
 
-  const [installs, revenue, subscriptions, activeUsers, providerCosts] = await Promise.all([
-    supabase.from('daily_installs').select('*').eq('date', date),
-    supabase.from('daily_revenue').select('*').eq('date', date),
-    supabase.from('daily_subscriptions').select('*').eq('date', date),
-    supabase.from('daily_active_users').select('*').eq('date', date),
-    supabase.from('daily_provider_costs').select('*').eq('date', date),
-  ]);
+  const installs = db.prepare('SELECT * FROM daily_installs WHERE date = ?').all(date) as Record<string, unknown>[];
+  const revenue = db.prepare('SELECT * FROM daily_revenue WHERE date = ?').all(date) as Record<string, unknown>[];
+  const subscriptions = db.prepare('SELECT * FROM daily_subscriptions WHERE date = ?').all(date) as Record<string, unknown>[];
+  const activeUsers = db.prepare('SELECT * FROM daily_active_users WHERE date = ?').all(date) as Record<string, unknown>[];
+  const providerCosts = db.prepare('SELECT * FROM daily_provider_costs WHERE date = ?').all(date) as Record<string, unknown>[];
 
   return {
-    installs: (installs.data || []) as DailyInstalls[],
-    revenue: (revenue.data || []) as DailyRevenue[],
-    subscriptions: (subscriptions.data || []) as DailySubscriptions[],
-    activeUsers: (activeUsers.data || []) as DailyActiveUsers[],
-    providerCosts: (providerCosts.data || []) as DailyProviderCosts[],
+    installs: mapRows('daily_installs', installs),
+    revenue: mapRows('daily_revenue', revenue),
+    subscriptions: mapRows('daily_subscriptions', subscriptions),
+    activeUsers: mapRows('daily_active_users', activeUsers),
+    providerCosts: mapRows('daily_provider_costs', providerCosts),
   };
 }
 
@@ -293,57 +331,45 @@ export async function getMetricsForDateRange(
   subscriptions: DailySubscriptions[];
   activeUsers: DailyActiveUsers[];
 }> {
-  const supabase = getSupabaseClient();
+  const db = getDb();
 
-  const [installs, revenue, subscriptions, activeUsers] = await Promise.all([
-    supabase
-      .from('daily_installs')
-      .select('*')
-      .gte('date', startDate)
-      .lte('date', endDate)
-      .order('date'),
-    supabase
-      .from('daily_revenue')
-      .select('*')
-      .gte('date', startDate)
-      .lte('date', endDate)
-      .order('date'),
-    supabase
-      .from('daily_subscriptions')
-      .select('*')
-      .gte('date', startDate)
-      .lte('date', endDate)
-      .order('date'),
-    supabase
-      .from('daily_active_users')
-      .select('*')
-      .gte('date', startDate)
-      .lte('date', endDate)
-      .order('date'),
-  ]);
+  const installs = db.prepare('SELECT * FROM daily_installs WHERE date >= ? AND date <= ? ORDER BY date').all(startDate, endDate) as Record<string, unknown>[];
+  const revenue = db.prepare('SELECT * FROM daily_revenue WHERE date >= ? AND date <= ? ORDER BY date').all(startDate, endDate) as Record<string, unknown>[];
+  const subscriptions = db.prepare('SELECT * FROM daily_subscriptions WHERE date >= ? AND date <= ? ORDER BY date').all(startDate, endDate) as Record<string, unknown>[];
+  const activeUsers = db.prepare('SELECT * FROM daily_active_users WHERE date >= ? AND date <= ? ORDER BY date').all(startDate, endDate) as Record<string, unknown>[];
 
   return {
-    installs: (installs.data || []) as DailyInstalls[],
-    revenue: (revenue.data || []) as DailyRevenue[],
-    subscriptions: (subscriptions.data || []) as DailySubscriptions[],
-    activeUsers: (activeUsers.data || []) as DailyActiveUsers[],
+    installs: mapRows('daily_installs', installs),
+    revenue: mapRows('daily_revenue', revenue),
+    subscriptions: mapRows('daily_subscriptions', subscriptions),
+    activeUsers: mapRows('daily_active_users', activeUsers),
   };
 }
 
 export async function getLatestReport(
   type: 'daily' | 'weekly' | 'monthly' = 'daily'
 ): Promise<DailyReport | null> {
-  const supabase = getSupabaseClient();
-  const { data, error } = await supabase
-    .from('daily_reports')
-    .select('*')
-    .eq('report_type', type)
-    .order('date', { ascending: false })
-    .limit(1)
-    .single();
+  const db = getDb();
+  const row = db.prepare(
+    'SELECT * FROM daily_reports WHERE report_type = ? ORDER BY date DESC LIMIT 1'
+  ).get(type) as Record<string, unknown> | undefined;
 
-  if (error && error.code !== 'PGRST116') {
-    throw new Error(`Failed to fetch latest report: ${error.message}`);
-  }
-  return data as DailyReport | null;
+  if (!row) return null;
+  const [mapped] = mapRows<DailyReport>('daily_reports', [row]);
+  return mapped ?? null;
+}
+
+// ============================================
+// BACKWARD COMPATIBILITY
+// ============================================
+
+/**
+ * @deprecated Use getDb() instead. Kept for backward compatibility during migration.
+ * Returns a proxy that throws helpful errors if Supabase-style methods are called.
+ */
+export function getSupabaseClient(): never {
+  throw new Error(
+    'getSupabaseClient() is no longer available. The database has been migrated to SQLite. ' +
+    'Use the exported query functions from src/db/client.ts instead.'
+  );
 }

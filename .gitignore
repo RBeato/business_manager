@@ -35,5 +35,15 @@ npm-debug.log*
 # Test coverage
 coverage/
 
+# SQLite database
+data/
+
 # Supabase
 supabase/.temp/
+
+# Next.js build output
+.next/
+
+# Temp files
+temp_csv/
+*.pdf

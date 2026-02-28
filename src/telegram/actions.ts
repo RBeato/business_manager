@@ -6,7 +6,7 @@
  */
 
 import type TelegramBot from 'node-telegram-bot-api';
-import { getSupabaseClient } from '../db/client.js';
+import { getDb, newId } from '../db/sqlite-client.js';
 import { editTelegramMessage, sendTelegramMessage } from '../delivery/telegram.js';
 import { buildBlogApprovedKeyboard, buildBlogRejectedKeyboard } from './keyboards.js';
 import { formatBlogFullPreview } from './messages.js';
@@ -52,36 +52,23 @@ async function handleApproveBlog(
   blogPostId: string,
   callbackQuery: TelegramBot.CallbackQuery,
 ): Promise<void> {
-  const supabase = getSupabaseClient();
+  const db = getDb();
   const chatId = callbackQuery.message?.chat.id?.toString();
   const messageId = callbackQuery.message?.message_id;
 
   // Idempotency check
-  const { data: existing } = await supabase
-    .from('telegram_actions')
-    .select('id')
-    .eq('callback_id', callbackQuery.id)
-    .single();
-
+  const existing = db.prepare('SELECT id FROM telegram_actions WHERE callback_id = ?').get(callbackQuery.id);
   if (existing) return;
 
   // Log the action
-  await supabase.from('telegram_actions').insert({
-    callback_id: callbackQuery.id,
-    action_type: 'approve_blog',
-    target_id: blogPostId,
-    user_id: callbackQuery.from.id,
-    status: 'pending',
-  });
+  db.prepare(
+    'INSERT INTO telegram_actions (id, callback_id, action_type, target_id, user_id, status) VALUES (?, ?, ?, ?, ?, ?)'
+  ).run(newId(), callbackQuery.id, 'approve_blog', blogPostId, callbackQuery.from.id, 'pending');
 
   try {
     // Update blog post status to approved
-    const { error } = await supabase
-      .from('blog_posts')
-      .update({ status: 'approved', reviewed_at: new Date().toISOString() })
-      .eq('id', blogPostId);
-
-    if (error) throw error;
+    db.prepare('UPDATE blog_posts SET status = ?, reviewed_at = ? WHERE id = ?')
+      .run('approved', new Date().toISOString(), blogPostId);
 
     // Update the message keyboard to show "Approved"
     if (chatId && messageId) {
@@ -94,20 +81,16 @@ async function handleApproveBlog(
     }
 
     // Mark action as completed
-    await supabase
-      .from('telegram_actions')
-      .update({ status: 'completed' })
-      .eq('callback_id', callbackQuery.id);
+    db.prepare('UPDATE telegram_actions SET status = ? WHERE callback_id = ?')
+      .run('completed', callbackQuery.id);
 
     console.log(`Blog post ${blogPostId} approved via Telegram`);
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
     console.error(`Failed to approve blog post ${blogPostId}:`, msg);
 
-    await supabase
-      .from('telegram_actions')
-      .update({ status: 'failed', error_message: msg })
-      .eq('callback_id', callbackQuery.id);
+    db.prepare('UPDATE telegram_actions SET status = ?, error_message = ? WHERE callback_id = ?')
+      .run('failed', msg, callbackQuery.id);
   }
 }
 
@@ -118,50 +101,26 @@ async function handleRejectBlog(
   blogPostId: string,
   callbackQuery: TelegramBot.CallbackQuery,
 ): Promise<void> {
-  const supabase = getSupabaseClient();
+  const db = getDb();
   const chatId = callbackQuery.message?.chat.id?.toString();
   const messageId = callbackQuery.message?.message_id;
 
   // Idempotency check
-  const { data: existing } = await supabase
-    .from('telegram_actions')
-    .select('id')
-    .eq('callback_id', callbackQuery.id)
-    .single();
-
+  const existing = db.prepare('SELECT id FROM telegram_actions WHERE callback_id = ?').get(callbackQuery.id);
   if (existing) return;
 
-  await supabase.from('telegram_actions').insert({
-    callback_id: callbackQuery.id,
-    action_type: 'reject_blog',
-    target_id: blogPostId,
-    user_id: callbackQuery.from.id,
-    status: 'pending',
-  });
+  db.prepare(
+    'INSERT INTO telegram_actions (id, callback_id, action_type, target_id, user_id, status) VALUES (?, ?, ?, ?, ?, ?)'
+  ).run(newId(), callbackQuery.id, 'reject_blog', blogPostId, callbackQuery.from.id, 'pending');
 
   try {
-    // Get the blog post to find its topic
-    const { data: post } = await supabase
-      .from('blog_posts')
-      .select('id, website')
-      .eq('id', blogPostId)
-      .single();
-
     // Update blog post status to rejected
-    const { error } = await supabase
-      .from('blog_posts')
-      .update({ status: 'rejected', reviewed_at: new Date().toISOString() })
-      .eq('id', blogPostId);
-
-    if (error) throw error;
+    db.prepare('UPDATE blog_posts SET status = ?, reviewed_at = ? WHERE id = ?')
+      .run('rejected', new Date().toISOString(), blogPostId);
 
     // Reset the topic back to queued so it can be regenerated
-    if (post) {
-      await supabase
-        .from('blog_topics')
-        .update({ status: 'queued' })
-        .eq('related_blog_post_id', blogPostId);
-    }
+    db.prepare("UPDATE blog_topics SET status = 'queued' WHERE related_blog_post_id = ?")
+      .run(blogPostId);
 
     // Update message keyboard
     if (chatId && messageId) {
@@ -173,20 +132,16 @@ async function handleRejectBlog(
       );
     }
 
-    await supabase
-      .from('telegram_actions')
-      .update({ status: 'completed' })
-      .eq('callback_id', callbackQuery.id);
+    db.prepare('UPDATE telegram_actions SET status = ? WHERE callback_id = ?')
+      .run('completed', callbackQuery.id);
 
     console.log(`Blog post ${blogPostId} rejected via Telegram`);
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
     console.error(`Failed to reject blog post ${blogPostId}:`, msg);
 
-    await supabase
-      .from('telegram_actions')
-      .update({ status: 'failed', error_message: msg })
-      .eq('callback_id', callbackQuery.id);
+    db.prepare('UPDATE telegram_actions SET status = ?, error_message = ? WHERE callback_id = ?')
+      .run('failed', msg, callbackQuery.id);
   }
 }
 
@@ -197,14 +152,10 @@ async function handlePreviewBlog(
   blogPostId: string,
   callbackQuery: TelegramBot.CallbackQuery,
 ): Promise<void> {
-  const supabase = getSupabaseClient();
+  const db = getDb();
   const chatId = callbackQuery.message?.chat.id?.toString();
 
-  const { data: post } = await supabase
-    .from('blog_posts')
-    .select('title, content')
-    .eq('id', blogPostId)
-    .single();
+  const post = db.prepare('SELECT title, content FROM blog_posts WHERE id = ?').get(blogPostId) as { title: string; content: string } | undefined;
 
   if (!post || !chatId) {
     console.error(`Blog post ${blogPostId} not found for preview`);

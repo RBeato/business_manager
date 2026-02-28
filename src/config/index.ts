@@ -29,11 +29,13 @@ function parseJsonEnv(key: string): string | undefined {
 
 export function loadConfig(): Config {
   return {
-    supabase: {
-      url: getRequiredEnv('SUPABASE_URL'),
-      anonKey: getRequiredEnv('SUPABASE_ANON_KEY'),
-      serviceRoleKey: getRequiredEnv('SUPABASE_SERVICE_ROLE_KEY'),
-    },
+    supabase: process.env.SUPABASE_URL
+      ? {
+          url: getRequiredEnv('SUPABASE_URL'),
+          anonKey: getRequiredEnv('SUPABASE_ANON_KEY'),
+          serviceRoleKey: getRequiredEnv('SUPABASE_SERVICE_ROLE_KEY'),
+        }
+      : undefined,
 
     appStoreConnect: process.env.APP_STORE_CONNECT_KEY_ID
       ? {

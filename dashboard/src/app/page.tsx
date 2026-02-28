@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { supabase, App, DailyRevenue, DailySubscription, DailyInstall, DailyProviderCost, Provider } from '@/lib/supabase'
+import type { App, DailyRevenue, DailySubscription, DailyInstall, DailyProviderCost, Provider } from '@/lib/supabase'
 import { format, subDays } from 'date-fns'
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar
@@ -295,31 +295,18 @@ export default function Dashboard() {
 
   useEffect(() => {
     async function fetchData() {
-      const thirtyDaysAgo = format(subDays(new Date(), 29), 'yyyy-MM-dd')
-
-      const [
-        appsResult,
-        revenueResult,
-        subscriptionsResult,
-        installsResult,
-        costsResult,
-        providersResult,
-      ] = await Promise.all([
-        supabase.from('apps').select('*').eq('is_active', true),
-        supabase.from('daily_revenue').select('*').gte('date', thirtyDaysAgo).order('date'),
-        supabase.from('daily_subscriptions').select('*').gte('date', thirtyDaysAgo).order('date'),
-        supabase.from('daily_installs').select('*').gte('date', thirtyDaysAgo).order('date'),
-        supabase.from('daily_provider_costs').select('*').gte('date', thirtyDaysAgo).order('date'),
-        supabase.from('providers').select('*').eq('is_active', true),
-      ])
-
-      if (appsResult.data) setApps(appsResult.data)
-      if (revenueResult.data) setRevenue(revenueResult.data)
-      if (subscriptionsResult.data) setSubscriptions(subscriptionsResult.data)
-      if (installsResult.data) setInstalls(installsResult.data)
-      if (costsResult.data) setCosts(costsResult.data)
-      if (providersResult.data) setProviders(providersResult.data)
-
+      try {
+        const res = await fetch('/api/dashboard')
+        const data = await res.json()
+        if (data.apps) setApps(data.apps)
+        if (data.revenue) setRevenue(data.revenue)
+        if (data.subscriptions) setSubscriptions(data.subscriptions)
+        if (data.installs) setInstalls(data.installs)
+        if (data.costs) setCosts(data.costs)
+        if (data.providers) setProviders(data.providers)
+      } catch (error) {
+        console.error('Failed to fetch dashboard data:', error)
+      }
       setLoading(false)
     }
 

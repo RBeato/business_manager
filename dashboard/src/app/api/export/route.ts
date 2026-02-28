@@ -1,14 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server'
 import * as XLSX from 'xlsx'
-import { supabase } from '@/lib/supabase'
+import { getDb, parseJson } from '@/lib/db'
 
 interface AppRow {
   id: string
   slug: string
   name: string
   type: string
-  platforms: string[]
-  is_active: boolean
+  platforms: string
+  is_active: number
 }
 
 interface ProviderRow {
@@ -30,45 +30,22 @@ export async function GET(request: NextRequest) {
     )
   }
 
-  // Fetch reference data and all metrics in parallel
-  const [
-    appsRes,
-    providersRes,
-    revenueRes,
-    subscriptionsRes,
-    installsRes,
-    costsRes,
-    searchConsoleRes,
-    websiteTrafficRes,
-    umamiRes,
-    emailRes,
-  ] = await Promise.all([
-    supabase.from('apps').select('*'),
-    supabase.from('providers').select('*'),
-    supabase.from('daily_revenue').select('*').gte('date', startDate).lte('date', endDate).order('date'),
-    supabase.from('daily_subscriptions').select('*').gte('date', startDate).lte('date', endDate).order('date'),
-    supabase.from('daily_installs').select('*').gte('date', startDate).lte('date', endDate).order('date'),
-    supabase.from('daily_provider_costs').select('*').gte('date', startDate).lte('date', endDate).order('date'),
-    supabase.from('daily_search_console').select('*').gte('date', startDate).lte('date', endDate).order('date'),
-    supabase.from('daily_website_traffic').select('*').gte('date', startDate).lte('date', endDate).order('date'),
-    supabase.from('daily_umami_stats').select('*').gte('date', startDate).lte('date', endDate).order('date'),
-    supabase.from('daily_email_metrics').select('*').gte('date', startDate).lte('date', endDate).order('date'),
-  ])
+  const db = getDb()
+
+  const apps = db.prepare('SELECT * FROM apps').all() as AppRow[]
+  const providers = db.prepare('SELECT * FROM providers').all() as ProviderRow[]
+  const revenue = db.prepare('SELECT * FROM daily_revenue WHERE date >= ? AND date <= ? ORDER BY date').all(startDate, endDate) as Record<string, unknown>[]
+  const subscriptions = db.prepare('SELECT * FROM daily_subscriptions WHERE date >= ? AND date <= ? ORDER BY date').all(startDate, endDate) as Record<string, unknown>[]
+  const installs = db.prepare('SELECT * FROM daily_installs WHERE date >= ? AND date <= ? ORDER BY date').all(startDate, endDate) as Record<string, unknown>[]
+  const costs = db.prepare('SELECT * FROM daily_provider_costs WHERE date >= ? AND date <= ? ORDER BY date').all(startDate, endDate) as Record<string, unknown>[]
+  const searchConsole = db.prepare('SELECT * FROM daily_search_console WHERE date >= ? AND date <= ? ORDER BY date').all(startDate, endDate) as Record<string, unknown>[]
+  const websiteTraffic = db.prepare('SELECT * FROM daily_website_traffic WHERE date >= ? AND date <= ? ORDER BY date').all(startDate, endDate) as Record<string, unknown>[]
+  const umami = db.prepare('SELECT * FROM daily_umami_stats WHERE date >= ? AND date <= ? ORDER BY date').all(startDate, endDate) as Record<string, unknown>[]
+  const email = db.prepare('SELECT * FROM daily_email_metrics WHERE date >= ? AND date <= ? ORDER BY date').all(startDate, endDate) as Record<string, unknown>[]
 
   // Build lookup maps
-  const apps: AppRow[] = appsRes.data || []
-  const providers: ProviderRow[] = providersRes.data || []
   const appMap = new Map(apps.map(a => [a.id, a.name]))
   const providerMap = new Map(providers.map(p => [p.id, p.name]))
-
-  const revenue = revenueRes.data || []
-  const subscriptions = subscriptionsRes.data || []
-  const installs = installsRes.data || []
-  const costs = costsRes.data || []
-  const searchConsole = searchConsoleRes.data || []
-  const websiteTraffic = websiteTrafficRes.data || []
-  const umami = umamiRes.data || []
-  const email = emailRes.data || []
 
   // ---- Build workbook ----
   const wb = XLSX.utils.book_new()
@@ -116,14 +93,13 @@ export async function GET(request: NextRequest) {
     ['Umami Visitors', totalUmamiVisitors],
   ]
   const summarySheet = XLSX.utils.aoa_to_sheet(summaryData)
-  // Set column widths for readability
   summarySheet['!cols'] = [{ wch: 35 }, { wch: 25 }]
   XLSX.utils.book_append_sheet(wb, summarySheet, 'Summary')
 
   // 2. Revenue sheet
   const revenueRows = revenue.map(r => ({
     Date: r.date,
-    App: appMap.get(r.app_id) || r.app_id,
+    App: appMap.get(r.app_id as string) || r.app_id,
     Platform: r.platform,
     'Gross Revenue': Number(r.gross_revenue || 0),
     'Net Revenue': Number(r.net_revenue || 0),
@@ -137,7 +113,7 @@ export async function GET(request: NextRequest) {
   // 3. Subscriptions sheet
   const subscriptionRows = subscriptions.map(r => ({
     Date: r.date,
-    App: appMap.get(r.app_id) || r.app_id,
+    App: appMap.get(r.app_id as string) || r.app_id,
     Platform: r.platform,
     'Active Subscriptions': Number(r.active_subscriptions || 0),
     'Active Trials': Number(r.active_trials || 0),
@@ -158,7 +134,7 @@ export async function GET(request: NextRequest) {
   // 4. Installs sheet
   const installRows = installs.map(r => ({
     Date: r.date,
-    App: appMap.get(r.app_id) || r.app_id,
+    App: appMap.get(r.app_id as string) || r.app_id,
     Platform: r.platform,
     Installs: Number(r.installs || 0),
     Uninstalls: Number(r.uninstalls || 0),
@@ -171,8 +147,8 @@ export async function GET(request: NextRequest) {
   // 5. Costs sheet
   const costRows = costs.map(r => ({
     Date: r.date,
-    Provider: providerMap.get(r.provider_id) || r.provider_id,
-    App: r.app_id ? (appMap.get(r.app_id) || r.app_id) : 'N/A',
+    Provider: providerMap.get(r.provider_id as string) || r.provider_id,
+    App: r.app_id ? (appMap.get(r.app_id as string) || r.app_id) : 'N/A',
     Cost: Number(r.cost || 0),
     'Usage Quantity': Number(r.usage_quantity || 0),
     'Usage Unit': r.usage_unit || '',
@@ -184,7 +160,7 @@ export async function GET(request: NextRequest) {
   // 6. Search Console sheet
   const gscRows = searchConsole.map(r => ({
     Date: r.date,
-    App: appMap.get(r.app_id) || r.app_id,
+    App: appMap.get(r.app_id as string) || r.app_id,
     Query: r.query || '',
     Page: r.page || '',
     Impressions: Number(r.impressions || 0),
@@ -202,7 +178,7 @@ export async function GET(request: NextRequest) {
   // 7. Website Traffic sheet
   const trafficRows = websiteTraffic.map(r => ({
     Date: r.date,
-    App: appMap.get(r.app_id) || r.app_id,
+    App: appMap.get(r.app_id as string) || r.app_id,
     Source: r.source || '',
     Medium: r.medium || '',
     Sessions: Number(r.sessions || 0),
@@ -225,20 +201,20 @@ export async function GET(request: NextRequest) {
   ]
   XLSX.utils.book_append_sheet(wb, trafficSheet, 'Website Traffic')
 
-  // 8. Umami sheet
+  // 8. Umami sheet — JSON fields are already strings in SQLite
   const umamiRows = umami.map(r => ({
     Date: r.date,
-    App: appMap.get(r.app_id) || r.app_id,
+    App: appMap.get(r.app_id as string) || r.app_id,
     'Website ID': r.website_id || '',
     Pageviews: Number(r.pageviews || 0),
     Visitors: Number(r.visitors || 0),
     Visits: Number(r.visits || 0),
     'Bounce Rate': Number(r.bounce_rate || 0),
     'Avg Visit Duration': Number(r.avg_visit_duration || 0),
-    'Top Pages': r.top_pages ? JSON.stringify(r.top_pages) : '',
-    'Top Referrers': r.top_referrers ? JSON.stringify(r.top_referrers) : '',
-    'Top Countries': r.top_countries ? JSON.stringify(r.top_countries) : '',
-    'Top Browsers': r.top_browsers ? JSON.stringify(r.top_browsers) : '',
+    'Top Pages': (r.top_pages as string) || '',
+    'Top Referrers': (r.top_referrers as string) || '',
+    'Top Countries': (r.top_countries as string) || '',
+    'Top Browsers': (r.top_browsers as string) || '',
   }))
   const umamiSheet = XLSX.utils.json_to_sheet(umamiRows)
   umamiSheet['!cols'] = [
@@ -273,7 +249,6 @@ export async function GET(request: NextRequest) {
   const fmt = searchParams.get('format') || 'xlsx'
 
   if (fmt === 'csv') {
-    // Generate a ZIP of CSVs, one per sheet
     const csvFiles: { name: string; data: Buffer }[] = []
     for (const sheetName of wb.SheetNames) {
       const csv = XLSX.utils.sheet_to_csv(wb.Sheets[sheetName])
@@ -308,7 +283,7 @@ export async function GET(request: NextRequest) {
   })
 }
 
-/** Minimal ZIP file builder — no external dependencies */
+/** Minimal ZIP file builder */
 function buildZip(files: { name: string; data: Buffer }[]): Buffer {
   const localHeaders: Buffer[] = []
   const centralEntries: Buffer[] = []
@@ -318,42 +293,40 @@ function buildZip(files: { name: string; data: Buffer }[]): Buffer {
     const nameBytes = Buffer.from(file.name, 'utf-8')
     const crc = crc32(file.data)
 
-    // Local file header (30 + nameLen + dataLen)
     const local = Buffer.alloc(30 + nameBytes.length)
-    local.writeUInt32LE(0x04034b50, 0)   // signature
-    local.writeUInt16LE(20, 4)           // version needed
-    local.writeUInt16LE(0, 6)            // flags
-    local.writeUInt16LE(0, 8)            // compression: stored
-    local.writeUInt16LE(0, 10)           // mod time
-    local.writeUInt16LE(0, 12)           // mod date
-    local.writeUInt32LE(crc, 14)         // crc-32
-    local.writeUInt32LE(file.data.length, 18) // compressed size
-    local.writeUInt32LE(file.data.length, 22) // uncompressed size
-    local.writeUInt16LE(nameBytes.length, 26) // filename length
-    local.writeUInt16LE(0, 28)           // extra field length
+    local.writeUInt32LE(0x04034b50, 0)
+    local.writeUInt16LE(20, 4)
+    local.writeUInt16LE(0, 6)
+    local.writeUInt16LE(0, 8)
+    local.writeUInt16LE(0, 10)
+    local.writeUInt16LE(0, 12)
+    local.writeUInt32LE(crc, 14)
+    local.writeUInt32LE(file.data.length, 18)
+    local.writeUInt32LE(file.data.length, 22)
+    local.writeUInt16LE(nameBytes.length, 26)
+    local.writeUInt16LE(0, 28)
     nameBytes.copy(local, 30)
 
     localHeaders.push(local, file.data)
 
-    // Central directory entry (46 + nameLen)
     const central = Buffer.alloc(46 + nameBytes.length)
-    central.writeUInt32LE(0x02014b50, 0) // signature
-    central.writeUInt16LE(20, 4)         // version made by
-    central.writeUInt16LE(20, 6)         // version needed
-    central.writeUInt16LE(0, 8)          // flags
-    central.writeUInt16LE(0, 10)         // compression: stored
-    central.writeUInt16LE(0, 12)         // mod time
-    central.writeUInt16LE(0, 14)         // mod date
-    central.writeUInt32LE(crc, 16)       // crc-32
-    central.writeUInt32LE(file.data.length, 20) // compressed size
-    central.writeUInt32LE(file.data.length, 24) // uncompressed size
-    central.writeUInt16LE(nameBytes.length, 28) // filename length
-    central.writeUInt16LE(0, 30)         // extra field length
-    central.writeUInt16LE(0, 32)         // file comment length
-    central.writeUInt16LE(0, 34)         // disk number start
-    central.writeUInt16LE(0, 36)         // internal file attributes
-    central.writeUInt32LE(0, 38)         // external file attributes
-    central.writeUInt32LE(offset, 42)    // relative offset of local header
+    central.writeUInt32LE(0x02014b50, 0)
+    central.writeUInt16LE(20, 4)
+    central.writeUInt16LE(20, 6)
+    central.writeUInt16LE(0, 8)
+    central.writeUInt16LE(0, 10)
+    central.writeUInt16LE(0, 12)
+    central.writeUInt16LE(0, 14)
+    central.writeUInt32LE(crc, 16)
+    central.writeUInt32LE(file.data.length, 20)
+    central.writeUInt32LE(file.data.length, 24)
+    central.writeUInt16LE(nameBytes.length, 28)
+    central.writeUInt16LE(0, 30)
+    central.writeUInt16LE(0, 32)
+    central.writeUInt16LE(0, 34)
+    central.writeUInt16LE(0, 36)
+    central.writeUInt32LE(0, 38)
+    central.writeUInt32LE(offset, 42)
     nameBytes.copy(central, 46)
 
     centralEntries.push(central)
@@ -362,19 +335,18 @@ function buildZip(files: { name: string; data: Buffer }[]): Buffer {
 
   const centralDir = Buffer.concat(centralEntries)
   const eocd = Buffer.alloc(22)
-  eocd.writeUInt32LE(0x06054b50, 0)         // signature
-  eocd.writeUInt16LE(0, 4)                  // disk number
-  eocd.writeUInt16LE(0, 6)                  // disk with central dir
-  eocd.writeUInt16LE(files.length, 8)       // entries on this disk
-  eocd.writeUInt16LE(files.length, 10)      // total entries
-  eocd.writeUInt32LE(centralDir.length, 12) // central dir size
-  eocd.writeUInt32LE(offset, 16)            // central dir offset
-  eocd.writeUInt16LE(0, 20)                 // comment length
+  eocd.writeUInt32LE(0x06054b50, 0)
+  eocd.writeUInt16LE(0, 4)
+  eocd.writeUInt16LE(0, 6)
+  eocd.writeUInt16LE(files.length, 8)
+  eocd.writeUInt16LE(files.length, 10)
+  eocd.writeUInt32LE(centralDir.length, 12)
+  eocd.writeUInt32LE(offset, 16)
+  eocd.writeUInt16LE(0, 20)
 
   return Buffer.concat([...localHeaders, centralDir, eocd])
 }
 
-/** CRC-32 implementation */
 function crc32(buf: Buffer): number {
   let crc = 0xFFFFFFFF
   for (let i = 0; i < buf.length; i++) {

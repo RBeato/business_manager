@@ -555,7 +555,7 @@ export interface SendTelegramResult {
 }
 
 export interface Config {
-  supabase: {
+  supabase?: {
     url: string;
     anonKey: string;
     serviceRoleKey: string;
