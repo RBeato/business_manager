@@ -13,6 +13,9 @@ import type {
   DailyUmamiStats,
   DailyReport,
   IngestionLog,
+  YouTubeOAuthToken,
+  DailyYouTubeMetrics,
+  YouTubeVideo,
 } from '../types/index.js';
 import { getDb, newId, parseJson, toJson, toBool, fromBool } from './sqlite-client.js';
 
@@ -66,6 +69,9 @@ const JSON_FIELDS_BY_TABLE: Record<string, string[]> = {
   blog_posts: ['keywords'],
   telegram_notifications: ['metadata'],
   revenuecat_events: ['webhook_payload', 'entitlement_ids'],
+  daily_youtube_metrics: ['raw_data'],
+  youtube_videos: ['raw_data'],
+  youtube_oauth_tokens: ['scopes'],
 };
 
 function mapRows<T>(table: string, rows: Record<string, unknown>[]): T[] {
@@ -357,6 +363,65 @@ export async function getLatestReport(
   if (!row) return null;
   const [mapped] = mapRows<DailyReport>('daily_reports', [row]);
   return mapped ?? null;
+}
+
+// ============================================
+// YOUTUBE OPERATIONS
+// ============================================
+
+export async function getYouTubeTokens(): Promise<YouTubeOAuthToken[]> {
+  const db = getDb();
+  const rows = db.prepare('SELECT * FROM youtube_oauth_tokens').all() as Record<string, unknown>[];
+  return mapRows<YouTubeOAuthToken>('youtube_oauth_tokens', rows);
+}
+
+export async function getYouTubeToken(channelId: string): Promise<YouTubeOAuthToken | null> {
+  const db = getDb();
+  const row = db.prepare('SELECT * FROM youtube_oauth_tokens WHERE channel_id = ?').get(channelId) as Record<string, unknown> | undefined;
+  if (!row) return null;
+  const [mapped] = mapRows<YouTubeOAuthToken>('youtube_oauth_tokens', [row]);
+  return mapped ?? null;
+}
+
+export async function upsertYouTubeToken(
+  data: Omit<YouTubeOAuthToken, 'id' | 'created_at' | 'updated_at'>
+): Promise<void> {
+  upsert('youtube_oauth_tokens', data as unknown as Record<string, unknown>, 'channel_id');
+}
+
+export async function upsertDailyYouTubeMetrics(
+  data: Omit<DailyYouTubeMetrics, 'id' | 'created_at'>
+): Promise<void> {
+  upsert('daily_youtube_metrics', data as unknown as Record<string, unknown>, 'channel_id, date');
+}
+
+export async function upsertYouTubeVideo(
+  data: Omit<YouTubeVideo, 'id' | 'created_at' | 'updated_at'>
+): Promise<void> {
+  upsert('youtube_videos', data as unknown as Record<string, unknown>, 'channel_id, video_id');
+}
+
+export async function getYouTubeMetrics(
+  channelId: string,
+  startDate: string,
+  endDate: string
+): Promise<DailyYouTubeMetrics[]> {
+  const db = getDb();
+  const rows = db.prepare(
+    'SELECT * FROM daily_youtube_metrics WHERE channel_id = ? AND date >= ? AND date <= ? ORDER BY date'
+  ).all(channelId, startDate, endDate) as Record<string, unknown>[];
+  return mapRows<DailyYouTubeMetrics>('daily_youtube_metrics', rows);
+}
+
+export async function getYouTubeVideos(channelId: string): Promise<YouTubeVideo[]> {
+  const db = getDb();
+  const rows = db.prepare(
+    'SELECT * FROM youtube_videos WHERE channel_id = ? ORDER BY views DESC'
+  ).all(channelId) as Record<string, unknown>[];
+  return rows.map(row => ({
+    ...mapJsonFields(row, ['raw_data']),
+    is_short: toBool(row.is_short as number),
+  })) as unknown as YouTubeVideo[];
 }
 
 // ============================================

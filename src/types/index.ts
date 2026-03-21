@@ -258,6 +258,62 @@ export interface DailyUmamiStats {
   created_at: string;
 }
 
+export interface YouTubeOAuthToken {
+  id: string;
+  channel_id: string;
+  channel_title?: string;
+  access_token: string;
+  refresh_token: string;
+  token_expiry: string;
+  scopes: string[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface DailyYouTubeMetrics {
+  id: string;
+  channel_id: string;
+  date: string;
+  views: number;
+  estimated_minutes_watched: number;
+  subscribers_gained: number;
+  subscribers_lost: number;
+  net_subscribers: number;
+  likes: number;
+  dislikes: number;
+  comments: number;
+  shares: number;
+  average_view_duration_seconds: number;
+  average_view_percentage: number;
+  impressions: number;
+  impressions_ctr: number;
+  card_click_rate: number;
+  raw_data?: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface YouTubeVideo {
+  id: string;
+  channel_id: string;
+  video_id: string;
+  title: string;
+  published_at?: string;
+  duration_seconds: number;
+  is_short: boolean;
+  views: number;
+  likes: number;
+  comments: number;
+  estimated_minutes_watched: number;
+  average_view_duration_seconds: number;
+  average_view_percentage: number;
+  impressions: number;
+  impressions_ctr: number;
+  thumbnail_url?: string;
+  raw_data?: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface DailyReport {
   id: string;
   date: string;
@@ -577,5 +633,9 @@ export interface Config {
   };
   brevo?: {
     websites: Record<string, { apiKey: string; appSlug: string }>;
+  };
+  youtube?: {
+    clientId: string;
+    clientSecret: string;
   };
 }

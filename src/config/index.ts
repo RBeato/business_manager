@@ -120,6 +120,13 @@ export function loadConfig(): Config {
         }
       : undefined,
 
+    youtube: process.env.YOUTUBE_CLIENT_ID
+      ? {
+          clientId: getRequiredEnv('YOUTUBE_CLIENT_ID'),
+          clientSecret: getRequiredEnv('YOUTUBE_CLIENT_SECRET'),
+        }
+      : undefined,
+
     brevo: process.env.BREVO_HOP_API_KEY || process.env.BREVO_RIFFROUTINE_API_KEY
       ? {
           websites: {

@@ -11,6 +11,7 @@ import { ingestEmailData } from './email.js';
 import { ingestSearchConsoleData } from './search-console.js';
 import { ingestUmamiData } from './umami.js';
 import { ingestBrevoData } from './brevo.js';
+import { ingestYouTubeData } from './youtube.js';
 import {
   ingestAnthropicData,
   ingestElevenLabsData,
@@ -37,6 +38,7 @@ const INGESTION_SOURCES: Record<string, IngestionFunction> = {
   'google-cloud': ingestGoogleCloudData,
   supabase: ingestSupabaseData,
   neon: ingestNeonData,
+  youtube: ingestYouTubeData,
 };
 
 export interface IngestionOptions {

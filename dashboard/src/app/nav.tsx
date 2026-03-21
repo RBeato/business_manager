@@ -9,6 +9,7 @@ export function NavBar() {
   const links = [
     { href: '/', label: 'Metrics' },
     { href: '/analytics', label: 'Analytics' },
+    { href: '/youtube', label: 'YouTube' },
     { href: '/content', label: 'Content Engine' },
   ]
 
